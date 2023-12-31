@@ -1,0 +1,4 @@
+aiomqtt==1.2.1
+asyncio-mqtt==0.16.2
+paho-mqtt==1.6.1
+pymodbus==3.6.2
