@@ -226,7 +226,7 @@ class ESPTouch:
         self._datum_code_packets = [b"\x01" * i for i in datum_code_packet_lengths]
 
         # Construct thread to run
-        self._thread = threading.Thread(target=self._thread_target)
+        self._thread = threading.Thread(target=self._thread_target, daemon=True)
         self._should_be_running = True
 
     def start(self):
@@ -274,36 +274,39 @@ class ESPTouch:
 def main():
     """Entrypoint"""
 
-    # Parse arguments
-    parser = argparse.ArgumentParser(description="Provision Riden RD60xx power supply with Wi-Fi network details and data endpoint address.")
-    parser.add_argument("ssid", type=str, help="SSID of the Wi-Fi network")
-    parser.add_argument("password", type=str, help="Password of the Wi-Fi network")
-    parser.add_argument("endpoint_ip", type=str, help="IP address of the server to connect to on the Wi-Fi network")
-    parser.add_argument("--adapter_ip", type=str, help="IP address of the local Wi-Fi adapter to transmit provisioning data on")
-    args = parser.parse_args()
+    try:
+        # Parse arguments
+        parser = argparse.ArgumentParser(description="Provision Riden RD60xx power supply with Wi-Fi network details and data endpoint address.")
+        parser.add_argument("ssid", type=str, help="SSID of the Wi-Fi network")
+        parser.add_argument("password", type=str, help="Password of the Wi-Fi network")
+        parser.add_argument("endpoint_ip", type=str, help="IP address of the server to connect to on the Wi-Fi network")
+        parser.add_argument("--adapter_ip", type=str, help="IP address of the local Wi-Fi adapter to transmit provisioning data on")
+        args = parser.parse_args()
 
-    # Generate one data stream for IP and another for password
-    instance_ip = ESPTouch(args.ssid, args.endpoint_ip, args.adapter_ip)
-    instance_pass = ESPTouch(args.ssid, args.password, args.adapter_ip)
+        # Generate one data stream for IP and another for password
+        instance_ip = ESPTouch(args.ssid, args.endpoint_ip, args.adapter_ip)
+        instance_pass = ESPTouch(args.ssid, args.password, args.adapter_ip)
 
-    # Send IP stream first
-    instance_ip.start()
+        # Send IP stream first
+        instance_ip.start()
 
-    # Pause while IP transmitted
-    print("Please press enter when power supply displays message 'Connecting wifi'...", end='', flush=True)
-    input()
+        # Pause while IP transmitted
+        print("Please press enter when power supply displays message 'Connecting wifi'...", end='', flush=True)
+        input()
 
-    # Stop IP stream and start password stream
-    instance_ip.stop()
-    instance_pass.start()
+        # Stop IP stream and start password stream
+        instance_ip.stop()
+        instance_pass.start()
 
-    # Pause while password
-    print("Please press enter when power supply displays message 'Connecting server'...", end='', flush=True)
-    input()
+        # Pause while password
+        print("Please press enter when power supply displays message 'Connecting server'...", end='', flush=True)
+        input()
 
-    # Stop IP stream (note we don't bother listening for the confirmations transmitted by the power supply)
-    instance_pass.stop()
+        # Stop IP stream (note we don't bother listening for the confirmations transmitted by the power supply)
+        instance_pass.stop()
 
+    except KeyboardInterrupt:
+        pass
 
 if __name__ == "__main__":
     main()
