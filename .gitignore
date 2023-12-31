@@ -1,0 +1,11 @@
+# VSCode projects
+.vscode
+
+# Python bytecode
+__pycache__
+
+# Virtual environments
+venv
+
+# Packet captures
+*.json
