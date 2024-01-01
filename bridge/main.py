@@ -2,6 +2,7 @@ import asyncio
 import configparser
 import logging
 import os
+import shutil
 import sys
 
 from rd60xx_to_mqtt import RD60xxToMQTT
@@ -18,11 +19,24 @@ def main():
 
 
     # Retrieve config file path
-    config_path = os.path.join(os.path.dirname(__file__), "config.ini")
+    app_dir = os.path.dirname(__file__)
+    template_file = os.path.join(app_dir, "config_example.ini")
+    config_dir = os.path.join(app_dir, "config")
+    config_file = os.path.join(config_dir, "config.ini")
+
+    # Ensure config directory exists
+    if not os.path.exists(config_dir):
+        os.mkdir(config_dir)
+
+    # Ensure config file exists
+    if not os.path.exists(config_file):
+        # Nope, copy template file and exit
+        shutil.copy(template_file, config_file)
+        sys.exit(0)
 
     # Load config file
     config = configparser.ConfigParser()
-    config.read(config_path)
+    config.read(config_file)
 
     # Extract config - MQTT
     hostname = config.get(section="MQTT", option="hostname", fallback=None)

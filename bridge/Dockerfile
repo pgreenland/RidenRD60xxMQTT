@@ -9,10 +9,10 @@ WORKDIR /app
 # Add all local python files and requirements.txt
 ADD *.py .
 ADD requirements.txt .
+ADD config_example.ini .
 
 # Update pip and install requirements
-RUN python3 -m pip install --upgrade pip
-RUN python3 -m pip install -r requirements.txt
+RUN python3 -m pip install --upgrade pip && python3 -m pip install -r requirements.txt
 
 # Launch service
 CMD ["python3", "main.py"]
