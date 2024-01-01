@@ -144,6 +144,7 @@ Messages will typically include the following fields:
 | firmware_version    | string  | Firmware version. e.g. "1.41".                                                                                                                                                                                     |   |   |   |
 | temp_c              | float   | Internal temperature sensor reading degrees C.                                                                                                                                                                     |   |   |   |
 | temp_f              | float   | Internal temperature sensor reading degrees F.                                                                                                                                                                     |   |   |   |
+| current_range       | integer | RD6012P only, current range selection (0 = 6A, 1 = 12A)                                                                                                                                                                   |   |   |   |
 | output_volage_set   | float   | Set output voltage.                                                                                                                                                                                                |   |   |   |
 | output_current_set  | float   | Set output current.                                                                                                                                                                                                |   |   |   |
 | ovp                 | float   | M0 over-voltage protection limit.                                                                                                                                                                                  |   |   |   |
@@ -183,6 +184,7 @@ For example:
   "firmware_version": "1.41",
   "temp_c": 29,
   "temp_f": 84,
+  "current_range": 0,
   "output_voltage_set": 12,
   "output_current_set": 1,
   "ovp": 62,

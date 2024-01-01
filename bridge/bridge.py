@@ -248,6 +248,7 @@ class Bridge:
             msg["firmware_version"] = state.firmware_version
             msg["temp_c"] = state.temp_c
             msg["temp_f"] = state.temp_f
+            msg["current_range"] = state.current_range
             msg["output_voltage_set"] = state.output_voltage_set
             msg["output_current_set"] = state.output_current_set
             msg["ovp"] = state.ovp

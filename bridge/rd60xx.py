@@ -16,6 +16,7 @@ class RD60xxStateGet:
                  firmware_version:str,
                  temp_c:float,
                  temp_f:float,
+                 current_range:int,
                  output_voltage_set:float,
                  output_current_set:float,
                  ovp:float,
@@ -42,6 +43,7 @@ class RD60xxStateGet:
         self._firmware_version = firmware_version
         self._temp_c = temp_c
         self._temp_f = temp_f
+        self._current_range = current_range
         self._output_voltage_set = output_voltage_set
         self._output_current_set = output_current_set
         self._ovp = ovp
@@ -80,6 +82,10 @@ class RD60xxStateGet:
     @property
     def temp_f(self) -> float:
         return self._temp_f
+
+    @property
+    def current_range(self) -> int:
+        return self._current_range
 
     @property
     def output_voltage_set(self) -> float:
@@ -249,6 +255,7 @@ class RD60xx(AsyncModbusReverseTcpClient):
         OUTPUT_MODE = 17 # 0 = CV, 1 = CC
         OUTPUT_ENABLE = 18
         PRESET = 19
+        CURRENT_RANGE = 20 # RD6012P and possibly others (0 = 6A, 1=12A)
         # Unused
         BATTERY_MODE = 32
         BATTERY_VOLTAGE = 33
@@ -287,17 +294,20 @@ class RD60xx(AsyncModbusReverseTcpClient):
 
     # Field scalings
     FIRMWARE_SCALE = 100.0
+    INPUT_VOLTAGE_SCALE = 100.0
     MODEL_VOLTAGE_SCALINGS = {
         6006 : 100.0, # Confirmed on an RD6006
         6012 : 100.0,
         6018 : 100.0, # Confirmed on an RD6018
-        6024 : 100.0
+        6024 : 100.0,
+        60125 : 1000.0, # Confirmed on an RD6012P
     }
-    MODEL_CURRENT_SCALINGS = {
-        6006 : 1000.0, # Confirmed on an RD6006
-        6012 : 100.0,
-        6018 : 100.0, # Confirmed on an RD6018
-        6024 : 100.0
+    MODEL_CURRENT_SCALINGS = { # (scale, uses current range)
+        6006 : (1000.0, False), # Confirmed on an RD6006
+        6012 : (100.0, False),
+        6018 : (100.0, False), # Confirmed on an RD6018
+        6024 : (100.0, False),
+        60125 : (1000.0, True), # Confirmed on an RD6012P
     }
     POWER_SCALE = 100.0
     BATT_SCALE = 1000.0
@@ -356,13 +366,31 @@ class RD60xx(AsyncModbusReverseTcpClient):
             # Helper to convert temperatures
             temp = lambda sign, val : (-1 if geta(sign) == 1 else 1) * geta(val)
 
-            # Lookup voltage and current scaling
-            # Remove what is assumed to be a hardware revision digit from the model
-            model_exc_hw_rev = geta(self.RD60xxRegisters.MODEL) // 10
-            voltage_scale = self.MODEL_VOLTAGE_SCALINGS.get(model_exc_hw_rev)
-            current_scale = self.MODEL_CURRENT_SCALINGS.get(model_exc_hw_rev)
+            # Lookup voltage and current scaling, with and without hardware revision
+            model_inc_hw_rev = geta(self.RD60xxRegisters.MODEL)
+            model_exc_hw_rev = model_inc_hw_rev // 10
+            if model_inc_hw_rev in self.MODEL_VOLTAGE_SCALINGS:
+                voltage_scale = self.MODEL_VOLTAGE_SCALINGS.get(model_inc_hw_rev)
+            else:
+                voltage_scale = self.MODEL_VOLTAGE_SCALINGS.get(model_exc_hw_rev)
+            if model_inc_hw_rev in self.MODEL_CURRENT_SCALINGS:
+                current_scale = self.MODEL_CURRENT_SCALINGS.get(model_inc_hw_rev)
+            else:
+                current_scale = self.MODEL_CURRENT_SCALINGS.get(model_exc_hw_rev)
             if voltage_scale is None or current_scale is None:
                 raise Exception("Unknown model, cannot scale voltage and current")
+
+            # Split current scale
+            current_scale, use_current_range = current_scale
+
+            # Snapshot current scale before applying range
+            current_scale_without_range = current_scale
+
+            # Retrieve current range
+            if use_current_range:
+                current_range = geta(self.RD60xxRegisters.CURRENT_RANGE)
+                if current_range == 0:
+                    current_scale *= 10
 
             # Request reading block of registers from PSU (M0 for OVP and OCP)
             response = await self.read_holding_registers(slave=self.PSU_ADDR,
@@ -384,14 +412,15 @@ class RD60xx(AsyncModbusReverseTcpClient):
                                    str(geta(self.RD60xxRegisters.FIRMWARE) / self.FIRMWARE_SCALE),
                                    temp(self.RD60xxRegisters.TEMP_DEG_C_SIGN, self.RD60xxRegisters.TEMP_DEG_C_VALUE),
                                    temp(self.RD60xxRegisters.TEMP_DEG_F_SIGN, self.RD60xxRegisters.TEMP_DEG_F_VALUE),
+                                   geta(self.RD60xxRegisters.CURRENT_RANGE),
                                    geta(self.RD60xxRegisters.OUTPUT_VOLTAGE_SET) / voltage_scale,
                                    geta(self.RD60xxRegisters.OUTPUT_CURRENT_SET) / current_scale,
                                    getb(self.RD60xxRegisters.M0_OVP) / voltage_scale,
-                                   getb(self.RD60xxRegisters.M0_OCP) / current_scale,
+                                   getb(self.RD60xxRegisters.M0_OCP) / current_scale_without_range,
                                    geta(self.RD60xxRegisters.OUTPUT_VOLTAGE_DISP) / voltage_scale,
                                    geta(self.RD60xxRegisters.OUTPUT_CURRENT_DISP) / current_scale,
                                    get32a(self.RD60xxRegisters.OUTPUT_POWER_DISP_HI, self.RD60xxRegisters.OUTPUT_POWER_DISP_LO) / self.POWER_SCALE,
-                                   geta(self.RD60xxRegisters.INPUT_VOLTAGE) / voltage_scale,
+                                   geta(self.RD60xxRegisters.INPUT_VOLTAGE) / self.INPUT_VOLTAGE_SCALE,
                                    geta(self.RD60xxRegisters.PROTECTION_STATUS),
                                    geta(self.RD60xxRegisters.OUTPUT_MODE),
                                    geta(self.RD60xxRegisters.OUTPUT_ENABLE) != 0,
@@ -457,13 +486,33 @@ class RD60xx(AsyncModbusReverseTcpClient):
         response = await self.read_holding_registers(slave=self.PSU_ADDR,
                                                      address=self.RD60xxRegisters.MODEL.value,
                                                      count=1)
-        model = response.registers[0] // 10
+        model_inc_hw_rev = response.registers[0]
+        model_exc_hw_rev = model_inc_hw_rev // 10
 
-        # Lookup voltage and current scaling
-        voltage_scale = self.MODEL_VOLTAGE_SCALINGS.get(model)
-        current_scale = self.MODEL_CURRENT_SCALINGS.get(model)
+        # Lookup voltage and current scaling, with and without hardware revision
+        if model_inc_hw_rev in self.MODEL_VOLTAGE_SCALINGS:
+            voltage_scale = self.MODEL_VOLTAGE_SCALINGS.get(model_inc_hw_rev)
+        else:
+            voltage_scale = self.MODEL_VOLTAGE_SCALINGS.get(model_exc_hw_rev)
+        if model_inc_hw_rev in self.MODEL_CURRENT_SCALINGS:
+            current_scale = self.MODEL_CURRENT_SCALINGS.get(model_inc_hw_rev)
+        else:
+            current_scale = self.MODEL_CURRENT_SCALINGS.get(model_exc_hw_rev)
         if voltage_scale is None or current_scale is None:
-            return
+            raise Exception("Unknown model, cannot scale voltage and current")
+
+        # Split current scale
+        current_scale, use_current_range = current_scale
+
+        # Retrieve current range
+        if use_current_range:
+            # Query unit model to lookup current scale
+            response = await self.read_holding_registers(slave=self.PSU_ADDR,
+                                                         address=self.RD60xxRegisters.CURRENT_RANGE.value,
+                                                         count=1)
+            current_range = response.registers[0]
+            if current_range == 0:
+                current_scale *= 10
 
         # Extract and scale values
         output_voltage_set = new_state.output_voltage_set

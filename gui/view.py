@@ -42,16 +42,26 @@ class RidenPSUView:
     CHECK_MARK = u"\u2713"
     BATTERY = "B" # Could use emoji u"\U0001F50B" (but this fails on Ubuntu 20.04 due to an xserver related error)
 
+    # Sizes
+    TEXT_FIELD_SIZES = {
+        60125 : 7
+    }
+
     # Voltage format strings
-    VOLTAGE_FORMAT = {}
+    VOLTAGE_FORMAT = {
+        60125 : "%06.3f", # Confirmed on RD6012P
+    }
 
     # Current format strings
-    CURRENT_FORMAT = {
-        6006 : "%05.3f"
+    CURRENT_FORMAT = { # Current range 0 vs 1
+        6006 : ("%05.3f", "%05.3f"),
+        60125 : ("%06.4f", "%06.3f"), # Confirmed on RD6012P
     }
 
     # Power format strings
-    POWER_FORMAT = {}
+    POWER_FORMAT = {
+        60125 : "%06.3f", # Confirmed on RD6012P
+    }
 
     def __init__(self, no_config_file:bool=False, config_file_path:str="") -> None:
         """Constructor"""
@@ -87,6 +97,9 @@ class RidenPSUView:
 
         # Reset PSU model
         self._psu_model = 60061 # Assume 6006 mk 1 at startup
+
+        # Reset current scale
+        self._current_range = 0
 
         # Reset info index to display
         self._info_index = 0
@@ -162,7 +175,7 @@ class RidenPSUView:
                 self._window["update_enable"].update(data=self.TOGGLE_BTN_ON if element.metadata else self.TOGGLE_BTN_OFF)
 
             elif event == "set_input_voltage":
-                self._window["input_voltage_value"].update(self._format_voltage(values['set_input_voltage']))
+                self._window["input_voltage_value"].update("%05.2fV" % values['set_input_voltage'])
 
             elif event == "set_output_voltage_set":
                 self._window["voltage_set_value"].update(self._format_voltage(values['set_output_voltage_set']))
@@ -319,6 +332,10 @@ class RidenPSUView:
         """Set auto-update state"""
         self._window.write_event_value("set_update_state", enabled)
 
+    def set_current_range(self, value:int):
+        """Set current range in use"""
+        self._current_range = value
+
     def set_input_voltage(self, value:float):
         """Set input voltage display element"""
         self._window.write_event_value("set_input_voltage", value)
@@ -403,6 +420,21 @@ class RidenPSUView:
         # Store PSU model number
         self._psu_model = psu.model
 
+        # Lookup number of digits required
+        if self._psu_model in self.TEXT_FIELD_SIZES:
+            text_field_size = self.TEXT_FIELD_SIZES[self._psu_model]
+        else:
+            text_field_size = self.TEXT_FIELD_SIZES.get(self._psu_model, 6)
+
+        # Update field sizes
+        self._window["voltage_disp"].set_size(size=(text_field_size, 1))
+        self._window["current_disp"].set_size(size=(text_field_size, 1))
+        self._window["power_disp"].set_size(size=(text_field_size, 1))
+        self._window["voltage_set_value"].set_size(size=(text_field_size, 1))
+        self._window["current_set_value"].set_size(size=(text_field_size, 1))
+        self._window["ovp_set_value"].set_size(size=(text_field_size, 1))
+        self._window["ocp_set_value"].set_size(size=(text_field_size, 1))
+
         # Inform model
         if self._model_ctrl is not None:
             self._model_ctrl.set_psu(psu.identity)
@@ -411,10 +443,13 @@ class RidenPSUView:
         """Format value according to PSU model"""
 
         # Remove hardware revision
-        model = self._psu_model // 10
+        model_exc_rev = self._psu_model // 10
 
-        # Lookup format
-        fmt = self.VOLTAGE_FORMAT.get(model, "%05.2f")
+        # Lookup format, trying complete match first
+        if self._psu_model in self.VOLTAGE_FORMAT:
+            fmt = self.VOLTAGE_FORMAT[self._psu_model]
+        else:
+            fmt = self.VOLTAGE_FORMAT.get(model_exc_rev, "%05.2f")
 
         return (fmt + "V") % val
 
@@ -422,10 +457,18 @@ class RidenPSUView:
         """Format value according to PSU model"""
 
         # Remove hardware revision
-        model = self._psu_model // 10
+        model_exc_rev = self._psu_model // 10
 
-        # Lookup format
-        fmt = self.CURRENT_FORMAT.get(model, "%05.2f")
+        # Limit current range
+        curr_range = self._current_range
+        curr_range = max(curr_range, 0)
+        curr_range = min(curr_range, 1)
+
+        # Lookup format, trying complete match first
+        if self._psu_model in self.CURRENT_FORMAT:
+            fmt = self.CURRENT_FORMAT[self._psu_model][curr_range]
+        else:
+            fmt = self.CURRENT_FORMAT.get(model_exc_rev, ("%05.2f", "%05.2f"))[curr_range]
 
         return (fmt + "A") % val
 
@@ -433,10 +476,13 @@ class RidenPSUView:
         """Format value according to PSU model"""
 
         # Remove hardware revision
-        model = self._psu_model // 10
+        model_exc_rev = self._psu_model // 10
 
-        # Lookup format
-        fmt = self.POWER_FORMAT.get(model, "%05.2f")
+        # Lookup format, trying complete match first
+        if self._psu_model in self.POWER_FORMAT:
+            fmt = self.POWER_FORMAT[self._psu_model]
+        else:
+            fmt = self.POWER_FORMAT.get(model_exc_rev, "%05.2f")
 
         return (fmt + "W") % val
 
@@ -600,7 +646,12 @@ class RidenPSUView:
 
         # Update fields
         if new_temp is not None:
-            temp = f"{new_temp:02d}°C"
+            if new_temp == -191:
+                # No sensor connected
+                temp = f"--°C"
+            else:
+                # Format sensor
+                temp = f"{new_temp:02d}°C"
         if new_batt_ah is not None:
             batt_ah = f"{new_batt_ah:07.3f}Ah"
         if new_batt_wh is not None:

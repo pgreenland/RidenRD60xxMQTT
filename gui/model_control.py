@@ -149,6 +149,8 @@ class RidenPSUModelControl:
                                 if self._view is not None:
                                     self._view.set_connected(payload.get("connected", False))
                                     self._view.set_update_state(payload.get("period", 0) > 0)
+                                    if "current_range" in payload:
+                                        self._view.set_current_range(payload["current_range"])
                                     if "input_voltage" in payload:
                                         self._view.set_input_voltage(payload["input_voltage"])
                                     if "output_voltage_set" in payload:
@@ -276,6 +278,9 @@ class RidenPSUModelControl:
             # Prepare topic wildcard
             self._wildcard_state = f"{self._mqtt_base_topic}/psu/{self._psu_identity}/state"
 
+        # Request a single query from the PSU
+        await self._mqtt_publish_state_get({"query" : True})
+
     # Interface implementation, passing requests to asyncio thread for processing
     def set_update(self, enabled:bool) -> None:
         """Set update period (auto-update enabled / disabled)"""
@@ -309,39 +314,48 @@ class RidenPSUModelControl:
     async def _set_update(self, enabled:bool) -> None:
         """Set update period (auto-update enabled / disabled) - helper"""
 
-        await self._mqtt_publish_state({"period" : 0.25 if enabled else 0.0})
+        await self._mqtt_publish_state_set({"period" : 0.25 if enabled else 0.0})
 
     async def _set_voltage(self, value:float) -> None:
         """Set new voltage - helper"""
 
-        await self._mqtt_publish_state({"output_voltage_set" : value})
+        await self._mqtt_publish_state_set({"output_voltage_set" : value})
 
     async def _set_current(self, value:float) -> None:
         """Set new current - helper"""
 
-        await self._mqtt_publish_state({"output_current_set" : value})
+        await self._mqtt_publish_state_set({"output_current_set" : value})
 
     async def _set_ovp(self, value:float) -> None:
         """Set new over-voltage protection limit - helper"""
 
-        await self._mqtt_publish_state({"ovp" : value})
+        await self._mqtt_publish_state_set({"ovp" : value})
 
     async def _set_ocp(self, value:float) -> None:
         """Set new over-current protection limit - helper"""
 
-        await self._mqtt_publish_state({"ocp" : value})
+        await self._mqtt_publish_state_set({"ocp" : value})
 
     async def _set_preset(self, index:int) -> None:
         """Set new preset number - helper"""
 
-        await self._mqtt_publish_state({"preset_index" : index})
+        await self._mqtt_publish_state_set({"preset_index" : index})
 
     async def _toggle_output_enable(self) -> None:
         """Toggle output state - helper"""
 
-        await self._mqtt_publish_state({"output_toggle" : True})
+        await self._mqtt_publish_state_set({"output_toggle" : True})
 
-    async def _mqtt_publish_state(self, state:dict):
+    async def _mqtt_publish_state_get(self, state:dict):
+        """Publish state set request on current PSU topic"""
+
+        if self._mqtt_client is not None and self._psu_identity is not None:
+            try:
+                await self._mqtt_client.publish(f"{self._mqtt_base_topic}/psu/{self._psu_identity}/state/get", payload=json.dumps(state))
+            except aiomqtt.MqttError:
+                pass
+
+    async def _mqtt_publish_state_set(self, state:dict):
         """Publish state set request on current PSU topic"""
 
         if self._mqtt_client is not None and self._psu_identity is not None:

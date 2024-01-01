@@ -50,6 +50,11 @@ class RidenPSUViewIntfc(abc.ABC):
         raise NotImplementedError()
 
     @abc.abstractmethod
+    def set_current_range(self, value:int):
+        """Set current range in use"""
+        raise NotImplementedError()
+
+    @abc.abstractmethod
     def set_input_voltage(self, value:float):
         """Set input voltage display element"""
         raise NotImplementedError()
