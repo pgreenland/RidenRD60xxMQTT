@@ -20,7 +20,8 @@ class RidenPSUModelControl:
                  insecure:bool=False,
                  mqtt_base_topic:str="riden_psu",
                  mqtt_reconnect_delay_secs:float=5,
-                 mqtt_probe_delay_secs:float=1) -> None:
+                 mqtt_probe_delay_secs:float=1,
+                 update_period:float=0.25) -> None:
         """Start and maintain MQTT connection"""
 
         # Store arguments
@@ -36,6 +37,7 @@ class RidenPSUModelControl:
         self._mqtt_base_topic = mqtt_base_topic
         self._mqtt_reconnect_delay_secs = mqtt_reconnect_delay_secs
         self._mqtt_probe_delay_secs = mqtt_probe_delay_secs
+        self._update_period = update_period
 
         # Reset MQTT tasks
         self._mqtt_task_in = None
@@ -314,7 +316,7 @@ class RidenPSUModelControl:
     async def _set_update(self, enabled:bool) -> None:
         """Set update period (auto-update enabled / disabled) - helper"""
 
-        await self._mqtt_publish_state_set({"period" : 0.25 if enabled else 0.0})
+        await self._mqtt_publish_state_set({"period" : self._update_period if enabled else 0.0})
 
     async def _set_voltage(self, value:float) -> None:
         """Set new voltage - helper"""

@@ -40,6 +40,9 @@ mqtt_base_topic = riden_psu
 
 ; Delay before reconnecting if MQTT connection lost
 mqtt_reconnect_delay_secs = 5
+
+; Update period
+;update_period = 0.25
 """
 
 def main():
@@ -80,6 +83,7 @@ def main():
     mqtt_base_topic = config.get(section="GENERAL", option="mqtt_base_topic", fallback="riden_psu")
     mqtt_reconnect_delay_secs = config.getfloat(section="GENERAL", option="mqtt_reconnect_delay_secs", fallback=5)
     mqtt_probe_delay_secs = config.getfloat(section="GENERAL", option="mqtt_probe_delay_secs", fallback=1)
+    update_period = config.getfloat(section="GENERAL", option="update_period", fallback=0.25)
 
     # Change to the "Selector" event loop if platform is Windows as required by aiomqtt
     if sys.platform.lower() == "win32" or os.name.lower() == "nt":
@@ -104,7 +108,8 @@ def main():
                                       insecure=insecure,
                                       mqtt_base_topic=mqtt_base_topic,
                                       mqtt_reconnect_delay_secs=mqtt_reconnect_delay_secs,
-                                      mqtt_probe_delay_secs=mqtt_probe_delay_secs)
+                                      mqtt_probe_delay_secs=mqtt_probe_delay_secs,
+                                      update_period=update_period)
 
     # Construct view
     view = RidenPSUView(no_config_file, config_path)
