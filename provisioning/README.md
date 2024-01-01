@@ -18,21 +18,21 @@ The ESP-Touch process allows for a network SSID, network password, access point 
 
 It does this by implementing what could best be described as a side-channel attack. Deliberately leaking information from within an encrypted system, in this case to advertise the credentials of the network.
 
-Before the PSU joins the Wi-Fi network it's able to monitor 802.11 packets being transmitted between hosts and access points, but isn't able to decrypt them. It can however monitor the lengths the encrypted payloads carried by these packets.
+Before the PSU joins the Wi-Fi network it's able to monitor 802.11 packets being transmitted between hosts and access points, but isn't able to decrypt them. It can however monitor the lengths of the encrypted payloads carried by these packets.
 
-The pairing process involves encoding the required information via the transmission of UDP packets of varying lengths within the encrypted network. Something that can easily be achieved from an application within user space. The data content of the packets transmitted is irrelivant (as the PSU can't decrypt them) but a small amount of information can be encoded by modifying the length of each packet transmitted.
+The pairing process involves encoding the required information via the transmission of UDP packets of varying lengths within the encrypted network. Something that can easily be achieved from an application within user space. The data content of the packets transmitted is irrelevant (as the PSU can't decrypt them) but a small amount of information can be encoded by modifying the length of each packet transmitted.
 
-The packets seen by the PSU can be through of as being length + overhead bytes long, where overhead is a fixed value added by the encryption method in use.
+The packets seen by the PSU can be thought of as being length + overhead bytes long. Where the overhead is a fixed value added by the encryption scheme in use.
 
-A training signal is therefore included, with a repeated sequence of lengths being sent. This allows the PSU to identify a candidate network to monitor.
+A training signal is therefore included, with a repeated sequence of lengths being sent. This allows the PSU to identify a candidate device to monitor.
 
 A separate data stream is then sent as a series of broadcast UDP packets, from which the PSU is able to recover the encoded information.
 
 Espressif thankfully provide example iOS and Android applications demonstrating this process. The [Android version](https://github.com/EspressifApp/EsptouchForAndroid/blob/1ed99af52c4c25a85feffeb231c433dde9535142/esptouch/src/main/java/com/espressif/iot/esptouch/EsptouchTask.java) was used as a reference to create the provisioning script here.
 
-The RuiDeng Riden use the ESP-Touch provisioning process in a slightly odd way.
+The RuiDeng Riden uses the ESP-Touch provisioning process in a slightly odd way.
 
-A single execution of the ESP-Touch process allows for an SSID, password, BSSID and IP address (for the device to contact once connected) to be transferred.
+A single execution of the process allows for an SSID, password, BSSID and IP address (for the device to contact once connected) to be transferred.
 
 The PSU makes use of two iterations. The first iteration it transmits the IP address of the mobile device in place of the network password. The second iteration it transmits the actual network password in the password field. Why they didn't use the IP field, dedicated for this purpose I've no idea.
 
