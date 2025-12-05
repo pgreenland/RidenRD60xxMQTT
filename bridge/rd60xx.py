@@ -301,6 +301,7 @@ class RD60xx(AsyncModbusReverseTcpClient):
         6018 : 100.0, # Confirmed on an RD6018
         6024 : 100.0,
         60125 : 1000.0, # Confirmed on an RD6012P
+        60301 : 100.0, # Changed 28.10.25
     }
     MODEL_CURRENT_SCALINGS = { # (scale, uses current range)
         6006 : (1000.0, False), # Confirmed on an RD6006
@@ -308,6 +309,7 @@ class RD60xx(AsyncModbusReverseTcpClient):
         6018 : (100.0, False), # Confirmed on an RD6018
         6024 : (100.0, False),
         60125 : (1000.0, True), # Confirmed on an RD6012P
+        60301 : (100.0, False), # Changed 28.10.25
     }
     POWER_SCALE = 100.0
     BATT_SCALE = 1000.0
