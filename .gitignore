@@ -9,3 +9,6 @@ venv
 
 # Packet captures
 *.json
+
+# Local bridge config
+bridge/config
