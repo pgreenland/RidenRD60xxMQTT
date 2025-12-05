@@ -1,4 +1,4 @@
 aiomqtt==1.2.1
 paho-mqtt==1.6.1
 platformdirs==4.1.0
-PySimpleGUI==4.60.5
+FreeSimpleGUI==5.2.0-post1

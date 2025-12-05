@@ -1,9 +1,12 @@
 import asyncio
 import json
+import logging
 from typing import Optional
 import aiomqtt
 
 from view_intfc import RidenPSUViewIntfc, RidenPSUListEntry
+
+logger = logging.getLogger(__name__)
 
 class RidenPSUModelControl:
     """Model / controller-esq class, managing MQTT connection and interaction between GUI and broker"""
@@ -115,6 +118,7 @@ class RidenPSUModelControl:
                     tls_insecure = self._insecure
 
                 # Construct client
+                logger.info(f"Connecting to MQTT broker at {self._hostname}:{self._port}")
                 async with aiomqtt.Client(hostname=self._hostname, port=self._port,
                                           username=self._username, password=self._password,
                                           tls_params=tls_params,
@@ -139,10 +143,14 @@ class RidenPSUModelControl:
                     async with client.messages() as messages:
                         # Process messages
                         async for message in messages:
+                            logger.debug(f"Received MQTT message on topic: {message.topic}")
+
                             # Attempt to de-serialize message
                             try:
                                 payload = json.loads(message.payload)
-                            except:
+                                logger.debug(f"Deserialized payload: {payload}")
+                            except Exception as e:
+                                logger.warning(f"Failed to deserialize message payload: {e}")
                                 continue
 
                             # Act on topics
@@ -189,15 +197,25 @@ class RidenPSUModelControl:
 
                             elif message.topic.matches(wildcard_psus_list):
                                 # PSU list, update GUI
+                                logger.debug("Received PSU list message on topic: %s", message.topic)
+                                logger.debug("PSU list payload: %s", payload)
+
                                 if self._view is not None:
                                     # Prepare list of PSUS
                                     psus = []
                                     for x in payload:
                                         if "identity" in x and "name" in x and "model" in x and "serial_no" in x:
-                                            psus.append(RidenPSUListEntry(x["identity"], x["name"], x["model"], x["serial_no"]))
+                                            psu_entry = RidenPSUListEntry(x["identity"], x["name"], x["model"], x["serial_no"])
+                                            psus.append(psu_entry)
+                                            logger.debug("Added PSU: %s", psu_entry)
+                                        else:
+                                            logger.warning("Skipping PSU entry with missing fields: %s", x)
 
+                                    logger.debug(f"Parsed {len(psus)} PSU(s) from list, updating GUI")
                                     # Inform GUI
                                     self._view.set_psus(psus)
+                                else:
+                                    logger.warning("Received PSU list but view is None")
 
             except aiomqtt.MqttError:
                 # MQTT connection failed, reset client

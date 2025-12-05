@@ -1,14 +1,17 @@
 from typing import Optional, List
+import logging
 import os
 import platform
 import subprocess
 import time
 import webbrowser
 
-import PySimpleGUI as sg
+import FreeSimpleGUI as sg
 
 from view_intfc import RidenPSUListEntry
 from model_control_intfc import RidenPSUModelControlIntfc
+
+logger = logging.getLogger(__name__)
 
 class RidenPSUView:
     """View for Riden RD60xx Remote Control"""
@@ -106,9 +109,6 @@ class RidenPSUView:
 
         # Create the Window
         self._window = sg.Window("Riden RD60xx MQTT Remote Control", layout, margins=(0, 0), icon=self.ICON, finalize=True)
-
-        # Finish theming combobox
-        self._fix_psu_select_colors()
 
         # Prepare styles, to set horizontal separator colors
         # From: https://github.com/PySimpleGUI/PySimpleGUI/issues/3025
@@ -322,6 +322,9 @@ class RidenPSUView:
     # Interface implementation, passing requests to GUI thread for processing
     def set_psus(self, psus:List[RidenPSUListEntry]):
         """Set PSU list box entries"""
+        logger.debug(f"set_psus called with {len(psus)} PSU(s)")
+        for psu in psus:
+            logger.debug(f"  PSU: {psu}")
         self._window.write_event_value("set_psus", psus)
 
     def set_connected(self, connected:bool):
@@ -530,13 +533,6 @@ class RidenPSUView:
 
         return frame
 
-    def _fix_psu_select_colors(self) -> None:
-        """Fix combobox colors"""
-
-        # From: https://github.com/PySimpleGUI/PySimpleGUI/issues/5424
-        psu_selector = self._window["psu_selector"].Widget
-        psu_selector.tk.eval('[ttk::combobox::PopdownWindow %s].f.l configure -foreground white -background black -selectforeground white -selectbackground black' % psu_selector)
-
     def _create_main_status(self) -> sg.Element:
         """Create main status area"""
 
@@ -729,11 +725,14 @@ class RidenPSUView:
     def _update_psus(self, new_psus:List[RidenPSUListEntry]) -> None:
         """Update PSU list, merging in new entries"""
 
+        logger.info(f"_update_psus called with {len(new_psus)} new PSU(s)")
+
         # Retrieve element
         psu_selector = self._window["psu_selector"]
 
         # Retrieve old list
         old_psus:List[RidenPSUListEntry] = psu_selector.metadata
+        logger.debug(f"Old PSU list has {len(old_psus)} PSU(s)")
 
         # Convert lists to dictionaries
         old_psus = {x.identity : x for x in old_psus}
@@ -744,6 +743,8 @@ class RidenPSUView:
         combined_psus.update(new_psus)
         combined_psus = list(combined_psus.values())
         combined_psus.sort(key=lambda x: str(x))
+
+        logger.info(f"Combined PSU list has {len(combined_psus)} PSU(s)")
 
         # If no PSU selected, select first PSU from new list
         curr_selection = psu_selector.get()
@@ -768,8 +769,10 @@ class RidenPSUView:
                 curr_selection = str(new_psus[self._psu_identity])
 
         # Update list
+        logger.debug("Updating psu_selector with %d PSU(s), current selection: '%s'", len(combined_psus), curr_selection)
         psu_selector.metadata = combined_psus
         psu_selector.update(values=combined_psus, value=curr_selection)
+        logger.info("PSU selector updated successfully")
 
     def _set_connected_colors_status(self) -> None:
         """Update colors and values as PSU is reported as connected / disconnected"""
