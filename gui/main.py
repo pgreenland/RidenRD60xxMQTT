@@ -1,5 +1,6 @@
 import asyncio
 import configparser
+import logging
 import os
 import sys
 import threading
@@ -8,6 +9,8 @@ import platformdirs
 
 from view import RidenPSUView
 from model_control import RidenPSUModelControl
+
+logger = logging.getLogger(__name__)
 
 # Could create this programatically, but that way doesn't support comments....so smash it in by hand
 DEFAULT_CONFIG = \
@@ -60,9 +63,9 @@ def main():
         try:
             with open(config_path, "w") as f:
                 f.write(DEFAULT_CONFIG)
-        except:
+        except Exception as e:
             # Ignore failure to write file....likely permissions or dinosaur related
-            pass
+            logger.error("Failed to write default config file: %s: %s", config_path, e)
 
     # Load config file
     config = configparser.ConfigParser()
@@ -97,6 +100,23 @@ def main():
     # Start asyncio loop in background thread
     threading.Thread(target=asyncio_loop_thread, args=(loop, ), daemon=True).start()
 
+    # Log MQTT and config information
+    logger.info("========== RD60xx MQTT Remote Control ==========")
+    logger.info("Config path         : %s", config_path)
+    logger.info("MQTT Hostname       : %s", hostname)
+    logger.info("MQTT Port           : %s", port)
+    logger.info("MQTT Client ID      : %s", client_id)
+    logger.info("MQTT Username       : %s", username)
+    logger.info("MQTT TLS/CA Cert    : %s", ca_cert)
+    logger.info("MQTT Client Cert    : %s", client_cert)
+    logger.info("MQTT Client Key     : %s", client_key)
+    logger.info("MQTT Insecure       : %s", insecure)
+    logger.info("MQTT Base Topic     : %s", mqtt_base_topic)
+    logger.info("Reconnect Delay (s) : %s", mqtt_reconnect_delay_secs)
+    logger.info("Probe Delay (s)     : %s", mqtt_probe_delay_secs)
+    logger.info("Update Period (s)   : %s", update_period)
+    logger.info("===============================================")
+    
     # Construct model
     model_ctrl = RidenPSUModelControl(hostname, port,
                                       client_id=client_id,
