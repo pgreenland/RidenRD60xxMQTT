@@ -4,8 +4,8 @@ class PSUState:
     def __init__(self) -> None:
         """Init new state"""
 
-        # Automatic updates disabled
-        self._update_period = 0
+        # Update period not set yet (None = not configured)
+        self._update_period = None
 
     @property
     def update_period(self):

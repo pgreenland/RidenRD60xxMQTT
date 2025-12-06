@@ -55,6 +55,9 @@ def main():
     ip_to_identity_cache_timeout_secs = config.getfloat(section="GENERAL", option="ip_to_identity_cache_timeout_secs", fallback=0)
     mqtt_reconnect_delay_secs = config.getfloat(section="GENERAL", option="mqtt_reconnect_delay_secs", fallback=5)
     set_clock_on_connection = config.getboolean(section="GENERAL", option="set_clock_on_connection", fallback=True)
+    default_update_period = config.getfloat(section="GENERAL", option="default_update_period", fallback=0)
+    mqtt_discovery_enabled = config.getboolean(section="GENERAL", option="mqtt_discovery_enabled", fallback=False)
+    mqtt_discovery_prefix = config.get(section="GENERAL", option="mqtt_discovery_prefix", fallback="homeassistant")
 
     # Extract config - PSUs
     psu_identity_to_name = {}
@@ -83,7 +86,10 @@ def main():
                                psu_identity_to_name=psu_identity_to_name,
                                ip_to_identity_cache_timeout_secs=ip_to_identity_cache_timeout_secs,
                                mqtt_reconnect_delay_secs=mqtt_reconnect_delay_secs,
-                               set_clock_on_connection=set_clock_on_connection)
+                               set_clock_on_connection=set_clock_on_connection,
+                               default_update_period=default_update_period,
+                               mqtt_discovery_enabled=mqtt_discovery_enabled,
+                               mqtt_discovery_prefix=mqtt_discovery_prefix)
 
     # Run service
     asyncio.run(mqtt_bridge.run())
