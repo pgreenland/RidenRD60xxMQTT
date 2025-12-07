@@ -10,8 +10,6 @@ import platformdirs
 from view import RidenPSUView
 from model_control import RidenPSUModelControl
 
-logger = logging.getLogger(__name__)
-
 # Could create this programatically, but that way doesn't support comments....so smash it in by hand
 DEFAULT_CONFIG = \
 """[MQTT]
@@ -38,6 +36,12 @@ client_id = rd60xx_gui
 ;insecure = yes
 
 [GENERAL]
+; Log level (debug, info, warning, error, critical)
+;log_level = debug
+
+; Log file path (if not specified, logs to stdout)
+;log_file = /var/log/rd60xx_gui.log
+
 ; MQTT topic name to use (should match bridge server application)
 mqtt_base_topic = riden_psu
 
@@ -56,6 +60,9 @@ def main():
 
     # Add config filename
     config_path = os.path.join(config_dir, "config.ini")
+
+    # Init logger
+    logger = logging.getLogger(__name__)
 
     # Write default config
     no_config_file = not os.path.exists(config_path)
@@ -83,10 +90,20 @@ def main():
     insecure = config.getboolean(section="MQTT", option="insecure", fallback=False)
 
     # Extract config - general
+    log_level = config.get(section="GENERAL", option="log_level", fallback="info")
+    log_file = config.get(section="GENERAL", option="log_file", fallback=None)
     mqtt_base_topic = config.get(section="GENERAL", option="mqtt_base_topic", fallback="riden_psu")
     mqtt_reconnect_delay_secs = config.getfloat(section="GENERAL", option="mqtt_reconnect_delay_secs", fallback=5)
     mqtt_probe_delay_secs = config.getfloat(section="GENERAL", option="mqtt_probe_delay_secs", fallback=1)
     update_period = config.getfloat(section="GENERAL", option="update_period", fallback=0.25)
+
+    log_level_attr = getattr(logging, log_level.upper())
+    # Init logging
+    log_format = '[%(asctime)s] [%(name)s] [%(levelname)s] %(message)s'
+    if log_file:
+        logging.basicConfig(filename=log_file, level=log_level_attr, format=log_format)
+    else:
+        logging.basicConfig(stream=sys.stdout, level=log_level_attr, format=log_format)
 
     # Change to the "Selector" event loop if platform is Windows as required by aiomqtt
     if sys.platform.lower() == "win32" or os.name.lower() == "nt":
