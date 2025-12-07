@@ -92,8 +92,8 @@ async def publish_discovery_config(
         # Battery
         {"name": "Battery Mode", "id": "battery_mode", "icon": "mdi:battery-charging", "value_template": "{{ value_json.battery_mode }}"},
         {"name": "Battery Voltage", "id": "battery_voltage", "unit": "V", "device_class": "voltage", "state_class": "measurement", "icon": "mdi:battery", "value_template": "{{ value_json.battery_voltage }}", "precision": 2},
-        {"name": "Battery Amp Hours", "id": "battery_ah", "unit": "Ah", "state_class": "measurement", "icon": "mdi:battery-charging-100", "value_template": "{{ value_json.battery_ah }}", "precision": 3},
-        {"name": "Battery Watt Hours", "id": "battery_wh", "unit": "Wh", "device_class": "energy", "state_class": "measurement", "icon": "mdi:lightning-bolt-circle", "value_template": "{{ value_json.battery_wh }}", "precision": 3},
+        {"name": "Battery Amp Hours", "id": "battery_ah", "unit": "Ah", "state_class": "measurement", "icon": "mdi:battery-charging-100", "value_template": "{{ value_json.batt_ah }}", "precision": 3},
+        {"name": "Battery Watt Hours", "id": "battery_wh", "unit": "Wh", "device_class": "energy", "state_class": "measurement", "icon": "mdi:lightning-bolt-circle", "value_template": "{{ value_json.batt_wh }}", "precision": 3},
     ]
 
     for sensor in sensors:

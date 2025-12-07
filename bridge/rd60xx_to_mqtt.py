@@ -348,6 +348,7 @@ class RD60xxToMQTT:
                 # Retrieve time
                 time_now = time.monotonic()
 
+                firmware_version = None
                 if identity is not None:
                     # Identity found, calculate elapsed time between now and when PSU last connected
                     time_diff = time_now - last_connection
@@ -357,9 +358,6 @@ class RD60xxToMQTT:
                         # PSU has been offline for longer than cache limit, force re-query
                         identity = None
                         last_connection = None
-
-                # Lookup name
-                name = self._psu_identity_to_name.get(identity, "Unnamed")
 
                 if identity is None:
                     # Query PSU to retrieve model and serial number (forming identity)
@@ -379,6 +377,10 @@ class RD60xxToMQTT:
                     # multiple series of PSU with overlapping serial number ranges
                     identity = f"{model}_{serial_no}"
 
+                # Lookup name
+                name = self._psu_identity_to_name.get(identity, "Unnamed")
+
+                if last_connection is None:
                     # Publish MQTT Discovery configuration if enabled
                     if self._mqtt_discovery_enabled:
                         await publish_discovery_config(
@@ -390,7 +392,6 @@ class RD60xxToMQTT:
                             name,
                             firmware_version
                         )
-
 
                 # Update last connection time
                 last_connection = time_now
