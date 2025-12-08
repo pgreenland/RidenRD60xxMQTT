@@ -64,6 +64,32 @@ async def publish_discovery_config(
     # Availability topic (bridge online/offline status)
     availability_topic = f"{mqtt_base_topic}/bridge/status"
 
+    # Build availability configurations
+    # Most entities need BOTH bridge online AND PSU connected
+    dual_availability = [
+        {
+            "topic": availability_topic,
+            "payload_available": "online",
+            "payload_not_available": "offline"
+        },
+        {
+            "topic": state_topic,
+            "value_template": "{{ value_json.connected }}",
+            "payload_available": "True",
+            "payload_not_available": "False"
+        }
+    ]
+
+    # The Connected sensor only needs bridge availability
+    # (otherwise it would become unavailable when showing disconnected)
+    bridge_only_availability = [
+        {
+            "topic": availability_topic,
+            "payload_available": "online",
+            "payload_not_available": "offline"
+        }
+    ]
+
     # Define all discovery configurations
     configs = []
 
@@ -103,9 +129,7 @@ async def publish_discovery_config(
             "object_id": f"riden_{identity}_{sensor['id']}",
             "state_topic": state_topic,
             "value_template": sensor["value_template"],
-            "availability_topic": availability_topic,
-            "payload_available": "online",
-            "payload_not_available": "offline",
+            "availability": dual_availability,
             "device": device
         }
         if "unit" in sensor:
@@ -123,6 +147,7 @@ async def publish_discovery_config(
         configs.append((topic, config))
 
     # Binary sensor for connection status
+    # Uses bridge-only availability so it can show disconnected state
     connected_sensor = {
         "name": "Connected",
         "unique_id": f"riden_{identity}_connected",
@@ -133,9 +158,7 @@ async def publish_discovery_config(
         "payload_off": False,
         "device_class": "connectivity",
         "icon": "mdi:connection",
-        "availability_topic": availability_topic,
-        "payload_available": "online",
-        "payload_not_available": "offline",
+        "availability": bridge_only_availability,
         "device": device
     }
     topic = f"{mqtt_discovery_prefix}/binary_sensor/riden_{identity}/connected/config"
@@ -154,9 +177,7 @@ async def publish_discovery_config(
         "state_on": True,
         "state_off": False,
         "icon": "mdi:power",
-        "availability_topic": availability_topic,
-        "payload_available": "online",
-        "payload_not_available": "offline",
+        "availability": dual_availability,
         "device": device
     }
     topic = f"{mqtt_discovery_prefix}/switch/riden_{identity}/output/config"
@@ -184,9 +205,7 @@ async def publish_discovery_config(
             "max": number["max"],
             "step": number["step"],
             "mode": "box",
-            "availability_topic": availability_topic,
-            "payload_available": "online",
-            "payload_not_available": "offline",
+            "availability": dual_availability,
             "device": device
         }
         if "unit" in number:
@@ -212,9 +231,7 @@ async def publish_discovery_config(
             "command_topic": button.get("command_topic", command_topic),
             "payload_press": button["payload"],
             "icon": button["icon"],
-            "availability_topic": availability_topic,
-            "payload_available": "online",
-            "payload_not_available": "offline",
+            "availability": dual_availability,
             "device": device
         }
 

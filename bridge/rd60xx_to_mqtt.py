@@ -143,12 +143,14 @@ class RD60xxToMQTT:
 
         # Reset host and port
         host_port = "0.0.0.0:0"
+        found_identity = None
 
         # Iterate over PSUs
         for identity, psu in self._psus.items():
             if client == psu.client:
-                # Found PSU, retrieve host and port
+                # Found PSU, retrieve host and port and identity
                 host_port = psu.host_port
+                found_identity = identity
 
                 # Cancel PSU background task
                 self._psus[identity].cancel()
@@ -159,6 +161,10 @@ class RD60xxToMQTT:
 
         # Aww
         self._logger.info("PSU disconnected (%s)", host_port)
+
+        # Publish disconnection status to MQTT if we found the PSU
+        if found_identity is not None:
+            asyncio.create_task(self._publish_psu_disconnected(found_identity))
 
     async def _mqtt_inbound(self):
         """Connect and reconnect to MQTT broker as required, subscribing to and reading messages"""
@@ -326,6 +332,24 @@ class RD60xxToMQTT:
             except aiomqtt.MqttError:
                 # Ignore MQTT errors
                 pass
+
+    async def _publish_psu_disconnected(self, identity:str):
+        """Publish PSU disconnected status to MQTT"""
+
+        # Get the persistent state to include period in the message
+        state = self._psu_states.get_state(identity, create=False)
+        period = state.update_period if state is not None else 0
+
+        # Publish disconnection message
+        msg = {
+            "connected": False,
+            "period": period
+        }
+
+        await self._mqtt_outbound(identity, msg)
+
+        # Also send updated PSU list (PSU already removed from _psus)
+        await self._send_psu_list()
 
     async def _psu_task(self):
         """Handle newly connected PSUs"""
