@@ -1,5 +1,6 @@
 import asyncio
 import configparser
+import logging
 import os
 import sys
 import threading
@@ -35,6 +36,12 @@ client_id = rd60xx_gui
 ;insecure = yes
 
 [GENERAL]
+; Log level (debug, info, warning, error, critical)
+;log_level = debug
+
+; Log file path (if not specified, logs to stdout)
+;log_file = /var/log/rd60xx_gui.log
+
 ; MQTT topic name to use (should match bridge server application)
 mqtt_base_topic = riden_psu
 
@@ -54,15 +61,18 @@ def main():
     # Add config filename
     config_path = os.path.join(config_dir, "config.ini")
 
+    # Init logger
+    logger = logging.getLogger(__name__)
+
     # Write default config
     no_config_file = not os.path.exists(config_path)
     if no_config_file:
         try:
             with open(config_path, "w") as f:
                 f.write(DEFAULT_CONFIG)
-        except:
+        except Exception as e:
             # Ignore failure to write file....likely permissions or dinosaur related
-            pass
+            logger.error("Failed to write default config file: %s: %s", config_path, e)
 
     # Load config file
     config = configparser.ConfigParser()
@@ -80,10 +90,20 @@ def main():
     insecure = config.getboolean(section="MQTT", option="insecure", fallback=False)
 
     # Extract config - general
+    log_level = config.get(section="GENERAL", option="log_level", fallback="info")
+    log_file = config.get(section="GENERAL", option="log_file", fallback=None)
     mqtt_base_topic = config.get(section="GENERAL", option="mqtt_base_topic", fallback="riden_psu")
     mqtt_reconnect_delay_secs = config.getfloat(section="GENERAL", option="mqtt_reconnect_delay_secs", fallback=5)
     mqtt_probe_delay_secs = config.getfloat(section="GENERAL", option="mqtt_probe_delay_secs", fallback=1)
     update_period = config.getfloat(section="GENERAL", option="update_period", fallback=0.25)
+
+    log_level_attr = getattr(logging, log_level.upper())
+    # Init logging
+    log_format = '[%(asctime)s] [%(name)s] [%(levelname)s] %(message)s'
+    if log_file:
+        logging.basicConfig(filename=log_file, level=log_level_attr, format=log_format)
+    else:
+        logging.basicConfig(stream=sys.stdout, level=log_level_attr, format=log_format)
 
     # Change to the "Selector" event loop if platform is Windows as required by aiomqtt
     if sys.platform.lower() == "win32" or os.name.lower() == "nt":
@@ -97,6 +117,23 @@ def main():
     # Start asyncio loop in background thread
     threading.Thread(target=asyncio_loop_thread, args=(loop, ), daemon=True).start()
 
+    # Log MQTT and config information
+    logger.info("========== RD60xx MQTT Remote Control ==========")
+    logger.info("Config path         : %s", config_path)
+    logger.info("MQTT Hostname       : %s", hostname)
+    logger.info("MQTT Port           : %s", port)
+    logger.info("MQTT Client ID      : %s", client_id)
+    logger.info("MQTT Username       : %s", username)
+    logger.info("MQTT TLS/CA Cert    : %s", ca_cert)
+    logger.info("MQTT Client Cert    : %s", client_cert)
+    logger.info("MQTT Client Key     : %s", client_key)
+    logger.info("MQTT Insecure       : %s", insecure)
+    logger.info("MQTT Base Topic     : %s", mqtt_base_topic)
+    logger.info("Reconnect Delay (s) : %s", mqtt_reconnect_delay_secs)
+    logger.info("Probe Delay (s)     : %s", mqtt_probe_delay_secs)
+    logger.info("Update Period (s)   : %s", update_period)
+    logger.info("===============================================")
+    
     # Construct model
     model_ctrl = RidenPSUModelControl(hostname, port,
                                       client_id=client_id,

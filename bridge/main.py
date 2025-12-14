@@ -10,14 +10,6 @@ from rd60xx_to_mqtt import RD60xxToMQTT
 def main():
     """Entrypoint"""
 
-    # Init logging
-    logging.basicConfig(stream=sys.stdout,
-                        level=logging.INFO,
-                        #format='[%(asctime)s] [%(filename)s:%(funcName)s:%(lineno)d] [%(name)s] [%(levelname)s] %(message)s'
-                        format='[%(asctime)s] [%(name)s] [%(levelname)s] %(message)s'
-                       )
-
-
     # Retrieve config file path
     app_dir = os.path.dirname(__file__)
     template_file = os.path.join(app_dir, "config_example.ini")
@@ -51,10 +43,19 @@ def main():
 
     # Extract config - general
     log_level = config.get(section="GENERAL", option="log_level", fallback="info")
+    log_file = config.get(section="GENERAL", option="log_file", fallback=None)
     mqtt_base_topic = config.get(section="GENERAL", option="mqtt_base_topic", fallback="riden_psu")
     ip_to_identity_cache_timeout_secs = config.getfloat(section="GENERAL", option="ip_to_identity_cache_timeout_secs", fallback=0)
     mqtt_reconnect_delay_secs = config.getfloat(section="GENERAL", option="mqtt_reconnect_delay_secs", fallback=5)
     set_clock_on_connection = config.getboolean(section="GENERAL", option="set_clock_on_connection", fallback=True)
+
+    log_level_attr = getattr(logging, log_level.upper())
+    # Init logging
+    log_format = '[%(asctime)s] [%(name)s] [%(levelname)s] %(message)s'
+    if log_file:
+        logging.basicConfig(filename=log_file, level=log_level_attr, format=log_format)
+    else:
+        logging.basicConfig(stream=sys.stdout, level=log_level_attr, format=log_format)
 
     # Extract config - PSUs
     psu_identity_to_name = {}
@@ -66,9 +67,6 @@ def main():
     if hostname is None:
         logging.error("Config must contain MQTT hostname at minimum")
         sys.exit(1)
-
-    # Set log level
-    logging.getLogger().setLevel(getattr(logging, log_level.upper()))
 
     # Construct service
     mqtt_bridge = RD60xxToMQTT(hostname, port,
