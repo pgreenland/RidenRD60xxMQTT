@@ -507,7 +507,7 @@ class RidenPSUView:
         # Select font
         if platform.system() == 'Darwin':
             # Need to specify a font for MacOS, else the menu looks ugly-as
-            menu_font = ("Lucida\ Grande", 13)
+            menu_font = ("Lucida Grande", 13)
         elif platform.system() == 'Linux':
             # Linux seems to look ok using the same font as most everything else here
             menu_font = (self.FONT, 12)

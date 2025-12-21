@@ -1,7 +1,9 @@
 import asyncio
 import json
 import logging
+import time
 from typing import Optional
+
 import aiomqtt
 
 from view_intfc import RidenPSUViewIntfc, RidenPSUListEntry
@@ -55,7 +57,7 @@ class RidenPSUModelControl:
         # Reset topic wildcard
         self._wildcard_state = None
 
-        # Reset recevied message count
+        # Reset received message count
         self._count_received = 0
 
     def set_view(self, view:RidenPSUViewIntfc):
@@ -66,7 +68,7 @@ class RidenPSUModelControl:
     def run(self) -> None:
         """Start and maintain MQTT connection"""
 
-        # Retreive event loop
+        # Retrieve event loop
         loop = asyncio.get_event_loop()
 
         # Create task to manage MQTT connection and process inbound messages
@@ -76,7 +78,7 @@ class RidenPSUModelControl:
     def stop(self) -> None:
         """Request MQTT client stop"""
 
-        # Retreive event loop
+        # Retrieve event loop
         loop = asyncio.get_event_loop()
 
         # Cancel MQTT task
@@ -85,7 +87,7 @@ class RidenPSUModelControl:
     def _start_mqtt_task(self):
         """Start MQTT task"""
 
-        # Retreive event loop
+        # Retrieve event loop
         loop = asyncio.get_event_loop()
 
         # Create task
@@ -117,13 +119,21 @@ class RidenPSUModelControl:
                     tls_params = aiomqtt.TLSParameters(self._ca_cert, self._client_cert, self._client_key)
                     tls_insecure = self._insecure
 
+                # Append time to client ID to make it unique
+                client_id = None
+                if self._client_id is not None:
+                    client_id = f"{self._client_id}_{int(time.time())}"
+
                 # Construct client
                 self._logger.info(f"Connecting to MQTT broker at {self._hostname}:{self._port}")
                 async with aiomqtt.Client(hostname=self._hostname, port=self._port,
                                           username=self._username, password=self._password,
                                           tls_params=tls_params,
                                           tls_insecure=tls_insecure,
-                                          client_id=self._client_id) as client:
+                                          identifier=client_id) as client:
+                    # Woop
+                    self._logger.info("MQTT Connected :-)")
+
                     # Make client available to psu connection handler
                     self._mqtt_client = client
 
@@ -139,86 +149,85 @@ class RidenPSUModelControl:
                     # Subscribe to target PSU and prepare wildcard
                     await self._subscribe_to_psu()
 
-                    # Retrive messages
-                    async with client.messages() as messages:
-                        # Process messages
-                        async for message in messages:
-                            self._logger.debug(f"Received MQTT message on topic: {message.topic}")
+                    # Process messages
+                    async for message in client.messages:
+                        self._logger.debug(f"Received MQTT message on topic: {message.topic}")
 
-                            # Attempt to de-serialize message
-                            try:
-                                payload = json.loads(message.payload)
-                                self._logger.debug(f"Deserialized payload: {payload}")
-                            except Exception as e:
-                                self._logger.warning(f"Failed to deserialize message payload: {e}")
-                                continue
+                        # Attempt to de-serialize message
+                        try:
+                            payload = json.loads(message.payload)
+                            self._logger.debug(f"Deserialized payload: {payload}")
+                        except Exception as e:
+                            self._logger.warning(f"Failed to deserialize message payload: {e}")
+                            continue
 
-                            # Act on topics
-                            if self._wildcard_state is not None and message.topic.matches(self._wildcard_state):
-                                # State report, update GUI
-                                if self._view is not None:
-                                    self._view.set_connected(payload.get("connected", False))
-                                    self._view.set_update_state(payload.get("period", 0) > 0)
-                                    if "current_range" in payload:
-                                        self._view.set_current_range(payload["current_range"])
-                                    if "input_voltage" in payload:
-                                        self._view.set_input_voltage(payload["input_voltage"])
-                                    if "output_voltage_set" in payload:
-                                        self._view.set_output_voltage_set(payload["output_voltage_set"])
-                                    if "output_current_set" in payload:
-                                        self._view.set_output_current_set(payload["output_current_set"])
-                                    if "ovp" in payload:
-                                        self._view.set_ovp(payload["ovp"])
-                                    if "ocp" in payload:
-                                        self._view.set_ocp(payload["ocp"])
-                                    if "output_voltage_disp" in payload:
-                                        self._view.set_output_voltage_disp(payload["output_voltage_disp"])
-                                    if "output_current_disp" in payload:
-                                        self._view.set_output_current_disp(payload["output_current_disp"])
-                                    if "output_power_disp" in payload:
-                                        self._view.set_output_power_disp(payload["output_power_disp"])
-                                    if "output_mode" in payload:
-                                        self._view.set_cc_cv(payload["output_mode"] == "cc")
-                                    if "protection_status" in payload:
-                                        self._view.set_ovp_ocp(payload["protection_status"])
-                                    if "battery_mode" in payload:
-                                        self._view.set_batt_state(payload["battery_mode"])
-                                    if "ext_temp_c" in payload:
-                                        self._view.set_temp(payload["ext_temp_c"])
-                                    if "batt_ah" in payload:
-                                        self._view.set_batt_ah(payload["batt_ah"])
-                                    if "batt_wh" in payload:
-                                        self._view.set_batt_wh(payload["batt_wh"])
-                                    if "output_enable" in payload:
-                                        self._view.set_output_enabled(payload["output_enable"])
+                        # Act on topics
+                        if self._wildcard_state is not None and message.topic.matches(self._wildcard_state):
+                            # State report, update GUI
+                            if self._view is not None:
+                                self._view.set_connected(payload.get("connected", False))
+                                self._view.set_update_state(payload.get("period", 0) > 0)
+                                if "current_range" in payload:
+                                    self._view.set_current_range(payload["current_range"])
+                                if "input_voltage" in payload:
+                                    self._view.set_input_voltage(payload["input_voltage"])
+                                if "output_voltage_set" in payload:
+                                    self._view.set_output_voltage_set(payload["output_voltage_set"])
+                                if "output_current_set" in payload:
+                                    self._view.set_output_current_set(payload["output_current_set"])
+                                if "ovp" in payload:
+                                    self._view.set_ovp(payload["ovp"])
+                                if "ocp" in payload:
+                                    self._view.set_ocp(payload["ocp"])
+                                if "output_voltage_disp" in payload:
+                                    self._view.set_output_voltage_disp(payload["output_voltage_disp"])
+                                if "output_current_disp" in payload:
+                                    self._view.set_output_current_disp(payload["output_current_disp"])
+                                if "output_power_disp" in payload:
+                                    self._view.set_output_power_disp(payload["output_power_disp"])
+                                if "output_mode" in payload:
+                                    self._view.set_cc_cv(payload["output_mode"] == "cc")
+                                if "protection_status" in payload:
+                                    self._view.set_ovp_ocp(payload["protection_status"])
+                                if "battery_mode" in payload:
+                                    self._view.set_batt_state(payload["battery_mode"])
+                                if "ext_temp_c" in payload:
+                                    self._view.set_temp(payload["ext_temp_c"])
+                                if "batt_ah" in payload:
+                                    self._view.set_batt_ah(payload["batt_ah"])
+                                if "batt_wh" in payload:
+                                    self._view.set_batt_wh(payload["batt_wh"])
+                                if "output_enable" in payload:
+                                    self._view.set_output_enabled(payload["output_enable"])
 
-                                # Inc counter
-                                self._count_received += 1
+                            # Inc counter
+                            self._count_received += 1
 
-                            elif message.topic.matches(wildcard_psus_list):
-                                # PSU list, update GUI
-                                self._logger.debug("Received PSU list message on topic: %s", message.topic)
-                                self._logger.debug("PSU list payload: %s", payload)
+                        elif message.topic.matches(wildcard_psus_list):
+                            # PSU list, update GUI
+                            self._logger.debug("Received PSU list message on topic: %s", message.topic)
+                            self._logger.debug("PSU list payload: %s", payload)
 
-                                if self._view is not None:
-                                    # Prepare list of PSUS
-                                    psus = []
-                                    for x in payload:
-                                        if "identity" in x and "name" in x and "model" in x and "serial_no" in x:
-                                            psu_entry = RidenPSUListEntry(x["identity"], x["name"], x["model"], x["serial_no"])
-                                            psus.append(psu_entry)
-                                            self._logger.debug("Added PSU: %s", psu_entry)
-                                        else:
-                                            self._logger.warning("Skipping PSU entry with missing fields: %s", x)
+                            if self._view is not None:
+                                # Prepare list of PSUs
+                                psus = []
+                                for x in payload:
+                                    if "identity" in x and "name" in x and "model" in x and "serial_no" in x:
+                                        psu_entry = RidenPSUListEntry(x["identity"], x["name"], x["model"], x["serial_no"])
+                                        psus.append(psu_entry)
+                                        self._logger.debug("Added PSU: %s", psu_entry)
+                                    else:
+                                        self._logger.warning("Skipping PSU entry with missing fields: %s", x)
 
-                                    self._logger.debug(f"Parsed {len(psus)} PSU(s) from list, updating GUI")
-                                    # Inform GUI
-                                    self._view.set_psus(psus)
-                                else:
-                                    self._logger.warning("Received PSU list but view is None")
+                                self._logger.debug(f"Parsed {len(psus)} PSU(s) from list, updating GUI")
+                                # Inform GUI
+                                self._view.set_psus(psus)
+                            else:
+                                self._logger.warning("Received PSU list but view is None")
 
-            except aiomqtt.MqttError:
+            except (aiomqtt.MqttError, Exception):
                 # MQTT connection failed, reset client
+                self._logger.exception("MQTT connection failed")
                 self._mqtt_client = None
 
                 # Report unit disconnected until broker reconnected

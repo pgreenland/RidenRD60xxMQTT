@@ -55,7 +55,7 @@ mqtt_reconnect_delay_secs = 5
 def main():
     """Entrypoint"""
 
-    # Retrieve config directory (creating if neccessary)
+    # Retrieve config directory (creating if necessary)
     config_dir = platformdirs.user_config_dir("RD60xxMQTTRemoteControl", "QuantulumLtd", ensure_exists=True)
 
     # Add config filename
@@ -133,7 +133,7 @@ def main():
     logger.info("Probe Delay (s)     : %s", mqtt_probe_delay_secs)
     logger.info("Update Period (s)   : %s", update_period)
     logger.info("===============================================")
-    
+
     # Construct model
     model_ctrl = RidenPSUModelControl(hostname, port,
                                       client_id=client_id,

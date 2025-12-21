@@ -2,7 +2,7 @@ from typing import Any, Optional
 import enum
 import time
 
-from pymodbus.framer import Framer
+from pymodbus.framer.base import FramerType
 from pymodbus.exceptions import ModbusException
 
 from async_modbus_reverse_tcp_client import AsyncModbusReverseTcpClient
@@ -295,23 +295,21 @@ class RD60xx(AsyncModbusReverseTcpClient):
     # Field scalings
     FIRMWARE_SCALE = 100.0
     INPUT_VOLTAGE_SCALE = 100.0
+    DEFAULT_VOLTAGE_SCALE = 100.0
     MODEL_VOLTAGE_SCALINGS = {
-        6006 : 100.0, # Confirmed on an RD6006
-        6012 : 100.0,
-        6018 : 100.0, # Confirmed on an RD6018
-        6024 : 100.0,
-        60125 : 1000.0, # Confirmed on an RD6012P
-        60301 : 100.0, # Changed 28.10.25
+        60125 : 1000.0,
     }
-    MODEL_CURRENT_SCALINGS = { # (scale, uses current range)
-        6006 : (1000.0, False), # Confirmed on an RD6006
-        6012 : (100.0, False),
-        6018 : (100.0, False), # Confirmed on an RD6018
-        6024 : (100.0, False),
-        60125 : (1000.0, True), # Confirmed on an RD6012P
-        60301 : (100.0, False), # Changed 28.10.25
+    DEFAULT_CURRENT_SCALE = (100.0, False) # (scale, uses current range)
+    MODEL_CURRENT_SCALINGS = {
+        # model : (scale, uses current range)
+        6006 : (1000.0, False),
+        60125 : (1000.0, True),
     }
-    POWER_SCALE = 100.0
+    DEFAULT_POWER_SCALE = 100.0
+    MODEL_POWER_SCALINGS = {
+        60125 : 1000.0,
+    }
+
     BATT_SCALE = 1000.0
 
     # To save querying PSU too much, only refresh presets periodically
@@ -321,7 +319,7 @@ class RD60xx(AsyncModbusReverseTcpClient):
         """Constructor"""
 
         # Init parent
-        AsyncModbusReverseTcpClient.__init__(self, client_connected_cb, client_disconnected_cb, framer=Framer.RTU, **kwargs)
+        AsyncModbusReverseTcpClient.__init__(self, client_connected_cb, client_disconnected_cb, framer=FramerType.RTU, **kwargs)
 
         # Reset presets
         self._presets = None
@@ -341,7 +339,7 @@ class RD60xx(AsyncModbusReverseTcpClient):
         ]
 
         # Write clock registers
-        await self.write_registers(slave=self.PSU_ADDR, address=self.RD60xxRegisters.YEAR.value, values=clock_registers)
+        await self.write_registers(device_id=self.PSU_ADDR, address=self.RD60xxRegisters.YEAR.value, values=clock_registers)
 
     async def get_state(self) -> Optional[RD60xxStateGet]:
         """Read and return current PSU status summary"""
@@ -352,7 +350,7 @@ class RD60xx(AsyncModbusReverseTcpClient):
         try:
             # Request reading block of registers from PSU (note this includes some unmapped registers)
             read_count = self.RD60xxRegisters.BATT_WH_LO.value - self.RD60xxRegisters.MODEL.value + 1
-            response = await self.read_holding_registers(slave=self.PSU_ADDR,
+            response = await self.read_holding_registers(device_id=self.PSU_ADDR,
                                                          address=self.RD60xxRegisters.MODEL.value,
                                                          count=read_count)
             regs_a = response.registers
@@ -372,15 +370,17 @@ class RD60xx(AsyncModbusReverseTcpClient):
             model_inc_hw_rev = geta(self.RD60xxRegisters.MODEL)
             model_exc_hw_rev = model_inc_hw_rev // 10
             if model_inc_hw_rev in self.MODEL_VOLTAGE_SCALINGS:
-                voltage_scale = self.MODEL_VOLTAGE_SCALINGS.get(model_inc_hw_rev)
+                voltage_scale = self.MODEL_VOLTAGE_SCALINGS[model_inc_hw_rev]
             else:
-                voltage_scale = self.MODEL_VOLTAGE_SCALINGS.get(model_exc_hw_rev)
+                voltage_scale = self.MODEL_VOLTAGE_SCALINGS.get(model_exc_hw_rev, self.DEFAULT_VOLTAGE_SCALE)
             if model_inc_hw_rev in self.MODEL_CURRENT_SCALINGS:
-                current_scale = self.MODEL_CURRENT_SCALINGS.get(model_inc_hw_rev)
+                current_scale = self.MODEL_CURRENT_SCALINGS[model_inc_hw_rev]
             else:
-                current_scale = self.MODEL_CURRENT_SCALINGS.get(model_exc_hw_rev)
-            if voltage_scale is None or current_scale is None:
-                raise Exception("Unknown model, cannot scale voltage and current")
+                current_scale = self.MODEL_CURRENT_SCALINGS.get(model_exc_hw_rev, self.DEFAULT_CURRENT_SCALE)
+            if model_inc_hw_rev in self.MODEL_POWER_SCALINGS:
+                power_scale = self.MODEL_POWER_SCALINGS[model_inc_hw_rev]
+            else:
+                power_scale = self.MODEL_POWER_SCALINGS.get(model_exc_hw_rev, self.DEFAULT_POWER_SCALE)
 
             # Split current scale
             current_scale, use_current_range = current_scale
@@ -395,7 +395,7 @@ class RD60xx(AsyncModbusReverseTcpClient):
                     current_scale *= 10
 
             # Request reading block of registers from PSU (M0 for OVP and OCP)
-            response = await self.read_holding_registers(slave=self.PSU_ADDR,
+            response = await self.read_holding_registers(device_id=self.PSU_ADDR,
                                                          address=self.RD60xxRegisters.M0_OVP.value,
                                                          count=2)
             regs_b = response.registers
@@ -421,7 +421,7 @@ class RD60xx(AsyncModbusReverseTcpClient):
                                    getb(self.RD60xxRegisters.M0_OCP) / current_scale_without_range,
                                    geta(self.RD60xxRegisters.OUTPUT_VOLTAGE_DISP) / voltage_scale,
                                    geta(self.RD60xxRegisters.OUTPUT_CURRENT_DISP) / current_scale,
-                                   get32a(self.RD60xxRegisters.OUTPUT_POWER_DISP_HI, self.RD60xxRegisters.OUTPUT_POWER_DISP_LO) / self.POWER_SCALE,
+                                   get32a(self.RD60xxRegisters.OUTPUT_POWER_DISP_HI, self.RD60xxRegisters.OUTPUT_POWER_DISP_LO) / power_scale,
                                    geta(self.RD60xxRegisters.INPUT_VOLTAGE) / self.INPUT_VOLTAGE_SCALE,
                                    geta(self.RD60xxRegisters.PROTECTION_STATUS),
                                    geta(self.RD60xxRegisters.OUTPUT_MODE),
@@ -454,7 +454,7 @@ class RD60xx(AsyncModbusReverseTcpClient):
         if elapsed_time > self.PRESET_READ_INTERVAL or self._presets is None:
             # Request reading block of registers from PSU
             read_count = self.RD60xxRegisters.M9_OCP.value - self.RD60xxRegisters.M1_V.value + 1
-            response = await self.read_holding_registers(slave=self.PSU_ADDR,
+            response = await self.read_holding_registers(device_id=self.PSU_ADDR,
                                                          address=self.RD60xxRegisters.M1_V.value,
                                                          count=read_count)
             regs = response.registers
@@ -485,23 +485,21 @@ class RD60xx(AsyncModbusReverseTcpClient):
         """Write new state to PSU"""
 
         # Query unit model to lookup scalings
-        response = await self.read_holding_registers(slave=self.PSU_ADDR,
+        response = await self.read_holding_registers(device_id=self.PSU_ADDR,
                                                      address=self.RD60xxRegisters.MODEL.value,
                                                      count=1)
         model_inc_hw_rev = response.registers[0]
         model_exc_hw_rev = model_inc_hw_rev // 10
 
-        # Lookup voltage and current scaling, with and without hardware revision
+        # Lookup voltage, current and power scaling, with and without hardware revision
         if model_inc_hw_rev in self.MODEL_VOLTAGE_SCALINGS:
-            voltage_scale = self.MODEL_VOLTAGE_SCALINGS.get(model_inc_hw_rev)
+            voltage_scale = self.MODEL_VOLTAGE_SCALINGS[model_inc_hw_rev]
         else:
-            voltage_scale = self.MODEL_VOLTAGE_SCALINGS.get(model_exc_hw_rev)
+            voltage_scale = self.MODEL_VOLTAGE_SCALINGS.get(model_exc_hw_rev, self.DEFAULT_VOLTAGE_SCALE)
         if model_inc_hw_rev in self.MODEL_CURRENT_SCALINGS:
-            current_scale = self.MODEL_CURRENT_SCALINGS.get(model_inc_hw_rev)
+            current_scale = self.MODEL_CURRENT_SCALINGS[model_inc_hw_rev]
         else:
-            current_scale = self.MODEL_CURRENT_SCALINGS.get(model_exc_hw_rev)
-        if voltage_scale is None or current_scale is None:
-            raise Exception("Unknown model, cannot scale voltage and current")
+            current_scale = self.MODEL_CURRENT_SCALINGS.get(model_exc_hw_rev, self.DEFAULT_CURRENT_SCALE)
 
         # Split current scale
         current_scale, use_current_range = current_scale
@@ -509,7 +507,7 @@ class RD60xx(AsyncModbusReverseTcpClient):
         # Retrieve current range
         if use_current_range:
             # Query unit model to lookup current scale
-            response = await self.read_holding_registers(slave=self.PSU_ADDR,
+            response = await self.read_holding_registers(device_id=self.PSU_ADDR,
                                                          address=self.RD60xxRegisters.CURRENT_RANGE.value,
                                                          count=1)
             current_range = response.registers[0]
@@ -528,42 +526,42 @@ class RD60xx(AsyncModbusReverseTcpClient):
         # Set preset
         if new_state.preset_index is not None:
             # Write register
-            await self.write_register(slave=self.PSU_ADDR, address=self.RD60xxRegisters.PRESET.value, value=new_state.preset_index)
+            await self.write_register(device_id=self.PSU_ADDR, address=self.RD60xxRegisters.PRESET.value, value=new_state.preset_index)
 
         # Send voltage and current together if both supplied
         if output_voltage_set is not None and output_current_set is not None:
             # Write registers
-            #await self.write_registers(slave=self.PSU_ADDR, address=self.RD60xxRegisters.OUTPUT_VOLTAGE_SET.value, values=[output_voltage_set, output_current_set])
-            await self.write_registers(slave=self.PSU_ADDR, address=self.RD60xxRegisters.M0_V.value, values=[output_voltage_set, output_current_set])
+            #await self.write_registers(device_id=self.PSU_ADDR, address=self.RD60xxRegisters.OUTPUT_VOLTAGE_SET.value, values=[output_voltage_set, output_current_set])
+            await self.write_registers(device_id=self.PSU_ADDR, address=self.RD60xxRegisters.M0_V.value, values=[output_voltage_set, output_current_set])
 
         elif output_voltage_set is not None:
             # Write register
-            #await self.write_register(slave=self.PSU_ADDR, address=self.RD60xxRegisters.OUTPUT_VOLTAGE_SET.value, value=output_voltage_set)
-            await self.write_register(slave=self.PSU_ADDR, address=self.RD60xxRegisters.M0_V.value, value=output_voltage_set)
+            #await self.write_register(device_id=self.PSU_ADDR, address=self.RD60xxRegisters.OUTPUT_VOLTAGE_SET.value, value=output_voltage_set)
+            await self.write_register(device_id=self.PSU_ADDR, address=self.RD60xxRegisters.M0_V.value, value=output_voltage_set)
 
         elif output_current_set is not None:
             # Write register
-            #await self.write_register(slave=self.PSU_ADDR, address=self.RD60xxRegisters.OUTPUT_CURRENT_SET.value, value=output_current_set)
-            await self.write_register(slave=self.PSU_ADDR, address=self.RD60xxRegisters.M0_C.value, value=output_current_set)
+            #await self.write_register(device_id=self.PSU_ADDR, address=self.RD60xxRegisters.OUTPUT_CURRENT_SET.value, value=output_current_set)
+            await self.write_register(device_id=self.PSU_ADDR, address=self.RD60xxRegisters.M0_C.value, value=output_current_set)
 
         # Send OVP / OCP
         if new_state.ovp is not None:
             # Write register
-            await self.write_register(slave=self.PSU_ADDR, address=self.RD60xxRegisters.M0_OVP.value, value=int(new_state.ovp * voltage_scale))
+            await self.write_register(device_id=self.PSU_ADDR, address=self.RD60xxRegisters.M0_OVP.value, value=int(new_state.ovp * voltage_scale))
 
         if new_state.ocp is not None:
             # Write register
-            await self.write_register(slave=self.PSU_ADDR, address=self.RD60xxRegisters.M0_OCP.value, value=int(new_state.ocp * current_scale))
+            await self.write_register(device_id=self.PSU_ADDR, address=self.RD60xxRegisters.M0_OCP.value, value=int(new_state.ocp * current_scale))
 
         # Send output enable
         if new_state.output_enable is not None:
             # Write register
-            await self.write_register(slave=self.PSU_ADDR, address=self.RD60xxRegisters.OUTPUT_ENABLE.value, value=1 if new_state.output_enable else 0)
+            await self.write_register(device_id=self.PSU_ADDR, address=self.RD60xxRegisters.OUTPUT_ENABLE.value, value=1 if new_state.output_enable else 0)
 
         # Toggle output if requested
         if new_state.output_toggle is not None and new_state.output_toggle:
             # Read register
-            response = await self.read_holding_registers(slave=self.PSU_ADDR,
+            response = await self.read_holding_registers(device_id=self.PSU_ADDR,
                                                          address=self.RD60xxRegisters.OUTPUT_ENABLE.value,
                                                          count=1)
             value = response.registers[0]
@@ -572,4 +570,4 @@ class RD60xx(AsyncModbusReverseTcpClient):
             value = 1 if value == 0 else 0
 
             # Write register
-            await self.write_register(slave=self.PSU_ADDR, address=self.RD60xxRegisters.OUTPUT_ENABLE.value, value=value)
+            await self.write_register(device_id=self.PSU_ADDR, address=self.RD60xxRegisters.OUTPUT_ENABLE.value, value=value)

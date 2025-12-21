@@ -63,7 +63,7 @@ class RD60xxToMQTT:
         # Newly connected PSUs
         self._new_psu_queue = asyncio.Queue(maxsize=16)
 
-        # Persistent state (data assoicated with PSU thats persisted across unit connections)
+        # Persistent state (data associated with PSU that's persisted across unit connections)
         self._psu_states = PSUStates()
 
         # Map of connected PSUs (serial no -> rd60xxmqtt instances)
@@ -78,7 +78,7 @@ class RD60xxToMQTT:
     async def run(self):
         """Run service"""
 
-        # Retreive event loop
+        # Retrieve event loop
         loop = asyncio.get_event_loop()
 
         # Register the signal handler
@@ -88,8 +88,7 @@ class RD60xxToMQTT:
         # Create TCP server, waiting for PSU clients to connect
         psu_server = await loop.create_server(
             lambda: RD60xx(self.psu_connected,
-                           self.psu_disconnected,
-                           close_comm_on_error=True),
+                           self.psu_disconnected),
             '0.0.0.0', 8080
         )
 
@@ -190,7 +189,7 @@ class RD60xxToMQTT:
                                           username=self._username, password=self._password,
                                           tls_params=tls_params,
                                           tls_insecure=tls_insecure,
-                                          client_id=self._client_id,
+                                          identifier=self._client_id,
                                           will=will_message) as client:
                     # Yey
                     self._logger.info("MQTT connected!")
@@ -202,87 +201,85 @@ class RD60xxToMQTT:
                     await client.publish(availability_topic, payload="online", qos=1, retain=True)
 
                     try:
-                        # Subscribe to PSU topics
-                        await client.subscribe(f"{self._mqtt_base_topic}/psu/list/get", qos=0)
-                        await client.subscribe(f"{self._mqtt_base_topic}/psu/+/state/get", qos=0)
-                        await client.subscribe(f"{self._mqtt_base_topic}/psu/+/state/set", qos=2)
-
                         # Prepare wildcards
                         wildcard_psus_get = f"{self._mqtt_base_topic}/psu/list/get"
                         wildcard_state_get = f"{self._mqtt_base_topic}/psu/+/state/get"
                         wildcard_state_set = f"{self._mqtt_base_topic}/psu/+/state/set"
 
-                        # Retrive messages
-                        async with client.messages() as messages:
-                            # Process messages, dispatching them to appropriate PSU instances
-                            async for message in messages:
-                                # Attempt to de-serialize message
-                                try:
-                                    payload = json.loads(message.payload)
-                                except:
-                                    payload = None
+                        # Subscribe to PSU topics
+                        await client.subscribe(wildcard_psus_get, qos=0)
+                        await client.subscribe(wildcard_state_get, qos=0)
+                        await client.subscribe(wildcard_state_set, qos=2)
 
-                                # Extract identity from topic
-                                topic = message.topic.value[len(f"{self._mqtt_base_topic}/"):]
-                                identity = topic.split("/")[1]
+                        # Process messages, dispatching them to appropriate PSU instances
+                        async for message in client.messages:
+                            # Attempt to de-serialize message
+                            try:
+                                payload = json.loads(message.payload)
+                            except:
+                                payload = None
 
-                                # Lookup PSU
-                                psu:Bridge = self._psus.get(identity)
+                            # Extract identity from topic
+                            topic = message.topic.value[len(f"{self._mqtt_base_topic}/"):]
+                            identity = topic.split("/")[1]
 
-                                # Log msg
-                                self._logger.debug("Msg arrived on topic: '%s', for identity: '%s' with payload: '%s'", topic, identity, repr(payload))
+                            # Lookup PSU
+                            psu:Bridge = self._psus.get(identity)
 
-                                # Act on topics
-                                if message.topic.matches(wildcard_state_set) and not payload is None:
-                                    # Set state request, retrieve state for PSU
+                            # Log msg
+                            self._logger.debug("Msg arrived on topic: '%s', for identity: '%s' with payload: '%s'", topic, identity, repr(payload))
+
+                            # Act on topics
+                            if message.topic.matches(wildcard_state_set) and not payload is None:
+                                # Set state request, retrieve state for PSU
+                                state = self._psu_states.get_state(identity, create=False)
+
+                                # Handle period first
+                                if type(payload.get("period")) in (int, float) and state is not None:
+                                    # Retrieve and limit period
+                                    update_period = payload["period"]
+                                    if update_period != 0:
+                                        # Limit to 100ms updates
+                                        update_period = max(update_period, 0.1)
+
+                                    # Set new update period
+                                    self._logger.debug("Update identity %s period to %d", identity, update_period)
+                                    state.update_period = update_period
+
+                                # Pass request to PSU if connected
+                                if psu is not None:
+                                    self._logger.debug("Set identity %s state to %s", identity, repr(payload))
+                                    psu.queue_state_set(payload)
+
+                                    # Check if any state-changing commands were sent (not just period)
+                                    state_changing_keys = {"output_voltage_set", "output_current_set", "ovp", "ocp",
+                                                            "output_enable", "output_toggle", "preset_index"}
+                                    if any(key in payload for key in state_changing_keys):
+                                        # Schedule a delayed state query if one isn't already pending
+                                        if identity not in self._pending_state_queries:
+                                            self._pending_state_queries.add(identity)
+                                            asyncio.create_task(self._delayed_state_query(identity, psu, 0.5))
+
+                            elif message.topic.matches(wildcard_state_get):
+                                # Get state request, check if we should query the unit
+                                if not payload is None and payload.get("query", False) and psu is not None:
+                                    # We should query the unit and we can
+                                    self._logger.debug("Get identity %s state with query", identity)
+                                    psu.queue_state_get()
+
+                                else:
+                                    # Nope, just checking if the unit is connected, or attempting to query it but its not connected
+                                    resp = {}
+                                    resp["connected"] = (psu is not None)
                                     state = self._psu_states.get_state(identity, create=False)
+                                    resp["period"] = (state.update_period if state is not None else 0)
+                                    self._logger.debug("Get identity %s state without query", identity)
+                                    await self._mqtt_outbound(identity, resp)
 
-                                    # Handle period first
-                                    if type(payload.get("period")) in (int, float) and state is not None:
-                                        # Retrieve and limit period
-                                        update_period = payload["period"]
-                                        if update_period != 0:
-                                            # Limit to 100ms updates
-                                            update_period = max(update_period, 0.1)
-
-                                        # Set new update period
-                                        self._logger.debug("Update identity %s period to %d", identity, update_period)
-                                        state.update_period = update_period
-
-                                    # Pass request to PSU if connected
-                                    if psu is not None:
-                                        self._logger.debug("Set identity %s state to %s", identity, repr(payload))
-                                        psu.queue_state_set(payload)
-
-                                        # Check if any state-changing commands were sent (not just period)
-                                        state_changing_keys = {"output_voltage_set", "output_current_set", "ovp", "ocp",
-                                                              "output_enable", "output_toggle", "preset_index"}
-                                        if any(key in payload for key in state_changing_keys):
-                                            # Schedule a delayed state query if one isn't already pending
-                                            if identity not in self._pending_state_queries:
-                                                self._pending_state_queries.add(identity)
-                                                asyncio.create_task(self._delayed_state_query(identity, psu, 0.5))
-
-                                elif message.topic.matches(wildcard_state_get):
-                                    # Get state request, check if we should query the unit
-                                    if not payload is None and payload.get("query", False) and psu is not None:
-                                        # We should query the unit and we can
-                                        self._logger.debug("Get identity %s state with query", identity)
-                                        psu.queue_state_get()
-
-                                    else:
-                                        # Nope, just checking if the unit is connected, or attempting to query it but its not connected
-                                        resp = {}
-                                        resp["connected"] = (psu is not None)
-                                        state = self._psu_states.get_state(identity, create=False)
-                                        resp["period"] = (state.update_period if state is not None else 0)
-                                        self._logger.debug("Get identity %s state without query", identity)
-                                        await self._mqtt_outbound(identity, resp)
-
-                                elif message.topic.matches(wildcard_psus_get):
-                                    # Send PSU list
-                                    self._logger.debug("Get psu list")
-                                    await self._send_psu_list()
+                            elif message.topic.matches(wildcard_psus_get):
+                                # Send PSU list
+                                self._logger.debug("Get psu list")
+                                await self._send_psu_list()
 
                     finally:
                         # Always publish offline status before disconnecting (graceful shutdown)
@@ -361,7 +358,7 @@ class RD60xxToMQTT:
         identity_cache:Dict[str, Tuple[str, int]] = {}
 
         try:
-            # Retireve PSUs from queue
+            # Retrieve PSUs from queue
             while True:
                 # Fetch newly connected PSU
                 psu, host, port = await self._new_psu_queue.get()

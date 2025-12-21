@@ -1,11 +1,13 @@
+from collections.abc import Callable
 from typing import Any
 import asyncio
 import platform
 import socket
 
 from pymodbus.client.base import ModbusBaseClient
-from pymodbus.framer import Framer
-from pymodbus.transport import CommType
+from pymodbus.framer.base import FramerType
+from pymodbus.pdu import ModbusPDU
+from pymodbus.transport import CommParams, CommType
 
 class AsyncModbusReverseTcpClient(ModbusBaseClient, asyncio.Protocol):
     """**AsyncModbusTcpClient**.
@@ -18,12 +20,10 @@ class AsyncModbusReverseTcpClient(ModbusBaseClient, asyncio.Protocol):
     Common optional parameters:
 
     :param framer: Framer enum name
-    :param timeout: Timeout for a request, in seconds.
+    :param timeout: Timeout for connecting and receiving data, in seconds (use decimals for milliseconds).
     :param retries: Max number of retries per request.
-    :param retry_on_empty: Retry on empty response.
-    :param broadcast_enable: True to treat id 0 as broadcast address.
-    :param no_resend_on_retry: Do not resend request when retrying due to missing response.
-    :param kwargs: Experimental parameters.
+    :param trace_packet: Called with bytestream received/to be sent
+    :param trace_pdu: Called with PDU received/to be sent
 
     Example::
 
@@ -62,8 +62,11 @@ class AsyncModbusReverseTcpClient(ModbusBaseClient, asyncio.Protocol):
         self,
         client_connected_cb,
         client_disconnected_cb,
-        framer: Framer = Framer.SOCKET,
-        **kwargs: Any,
+        framer: FramerType = FramerType.SOCKET,
+        timeout: float = 1.0,
+        retries: int = 3,
+        trace_packet: Callable[[bool, bytes], bytes] | None = None,
+        trace_pdu: Callable[[bool, ModbusPDU], ModbusPDU] | None = None,
     ) -> None:
         """Initialize Asyncio Modbus Reverse TCP Client."""
 
@@ -71,33 +74,30 @@ class AsyncModbusReverseTcpClient(ModbusBaseClient, asyncio.Protocol):
         self._client_connected_cb = client_connected_cb
         self._client_disconnected_cb = client_disconnected_cb
 
-        # Force comms type
-        kwargs["CommType"] = CommType.TCP
-
-        # Clear reset delay, preventing "client" from attempting to reconnect on connection loss
-        kwargs["reconnect_delay"] = 0
+        # Force comms type and clear reset delay, preventing "client" from attempting to reconnect on connection loss
+        comm_params = CommParams(
+            comm_type=CommType.TCP,
+            reconnect_delay=0, # Clear reset delay, preventing "client" from attempting to reconnect on connection loss
+            timeout_connect=timeout # Connection timeout (used for communication retries in this case)
+        )
 
         # Init parents
         asyncio.Protocol.__init__(self)
         ModbusBaseClient.__init__(
             self,
-            framer,
-            **kwargs,
+            framer=framer,
+            retries=retries,
+            comm_params=comm_params,
+            trace_packet=trace_packet,
+            trace_pdu=trace_pdu,
+            trace_connect=None
         )
-
-    async def connect(self):
-        """Connect to the modbus remote host, override parent implementation to supress"""
-
-        # Assume we're always connected, until a socket error disconnects us
-        return True
-
-    def close(self, reconnect: bool = False) -> None:
-        """Close connection, override parent implementation to supress reconnect logic."""
-
-        self.transport_close()
 
     def connection_made(self, transport):
         """Handle new connection"""
+
+        # Provide transport to transaction manager
+        self.ctx.transport = transport
 
         # Retrieve socket
         sock = transport.get_extra_info("socket")
@@ -123,11 +123,17 @@ class AsyncModbusReverseTcpClient(ModbusBaseClient, asyncio.Protocol):
         elif platform.system() == "Windows":
             sock.ioctl(socket.SIO_KEEPALIVE_VALS, (1, 5 * 1000, 2 * 1000)) # enable, ms idle time before starting probes, ms between probes
 
-        # Pass to parent
-        super().connection_made(transport)
+        # Pass to transaction manager
+        self.ctx.callback_connected()
 
         # Notify via callback
         self._client_connected_cb(self, transport)
+
+    def data_received(self, data):
+        """Handle received data"""
+
+        # Pass to transaction manager
+        self.ctx.callback_data(data=data)
 
     def connection_lost(self, exc):
         """Handle closed connection"""
@@ -135,5 +141,5 @@ class AsyncModbusReverseTcpClient(ModbusBaseClient, asyncio.Protocol):
         # Notify via callback
         self._client_disconnected_cb(self)
 
-        # Pass to parent
-        super().connection_lost(exc)
+        # Pass to transaction manager
+        self.ctx.connection_lost(exc)

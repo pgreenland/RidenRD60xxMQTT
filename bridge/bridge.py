@@ -151,7 +151,7 @@ class Bridge:
                 pass
 
         except asyncio.CancelledError:
-            # Task canclled
+            # Task cancelled
             pass
 
         except:
