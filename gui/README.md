@@ -19,3 +19,16 @@ python3 main.py
 ```
 
 On first run the application will request broker details be configured, opening an example configuration in the system's default text editor.
+
+## Packaging
+
+The application may be packaged, with its dependencies to make it feel a little more native.
+
+Within the virtual environment created above:
+
+```
+python3 -m pip install pyinstaller pillow
+pyinstaller --onefile --windowed --icon ruideng.png main.py
+```
+
+Which will provide a single file python application in the `dist` directory.
