@@ -725,7 +725,7 @@ class RidenPSUView:
     def _update_psus(self, new_psus:List[RidenPSUListEntry]) -> None:
         """Update PSU list, merging in new entries"""
 
-        self._logger.info(f"_update_psus called with {len(new_psus)} new PSU(s)")
+        self._logger.debug(f"_update_psus called with {len(new_psus)} new PSU(s)")
 
         # Retrieve element
         psu_selector = self._window["psu_selector"]
@@ -744,7 +744,7 @@ class RidenPSUView:
         combined_psus = list(combined_psus.values())
         combined_psus.sort(key=lambda x: str(x))
 
-        self._logger.info(f"Combined PSU list has {len(combined_psus)} PSU(s)")
+        self._logger.debug(f"Combined PSU list has {len(combined_psus)} PSU(s)")
 
         # If no PSU selected, select first PSU from new list
         curr_selection = psu_selector.get()
@@ -772,7 +772,7 @@ class RidenPSUView:
         self._logger.debug("Updating psu_selector with %d PSU(s), current selection: '%s'", len(combined_psus), curr_selection)
         psu_selector.metadata = combined_psus
         psu_selector.update(values=combined_psus, value=curr_selection)
-        self._logger.info("PSU selector updated successfully")
+        self._logger.debug("PSU selector updated successfully")
 
     def _set_connected_colors_status(self) -> None:
         """Update colors and values as PSU is reported as connected / disconnected"""

@@ -48,7 +48,7 @@ When started an output similar the following should be seen:
 ```
 [2023-12-30 18:58:10,444] [RD60xxToMQTT] [INFO] MQTT task running
 [2023-12-30 18:58:10,447] [RD60xxToMQTT] [INFO] PSU task running
-[2023-12-30 18:58:10,456] [RD60xxToMQTT] [INFO] MQTT connected!
+[2023-12-30 18:58:10,456] [RD60xxToMQTT] [INFO] MQTT connected :-)
 ```
 
 Indicating that the application has connected to the MQTT server and is waiting for power supplies to connect.

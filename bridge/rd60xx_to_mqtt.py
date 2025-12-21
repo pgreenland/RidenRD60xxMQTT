@@ -192,7 +192,7 @@ class RD60xxToMQTT:
                                           identifier=self._client_id,
                                           will=will_message) as client:
                     # Yey
-                    self._logger.info("MQTT connected!")
+                    self._logger.info("MQTT connected :-)")
 
                     # Make client available to psu connection handler
                     self._mqtt_client = client
