@@ -1,9 +1,10 @@
 from typing import Any, Optional
 import enum
+import logging
 import time
 
+from pymodbus.logging import Log
 from pymodbus.framer.base import FramerType
-from pymodbus.exceptions import ModbusException
 
 from async_modbus_reverse_tcp_client import AsyncModbusReverseTcpClient
 
@@ -202,31 +203,31 @@ class RD60xxStateSet:
             self._output_toggle = bool(self._output_toggle)
 
     @property
-    def preset_index(self) -> int:
+    def preset_index(self) -> Optional[int]:
         return self._preset_index
 
     @property
-    def output_voltage_set(self) -> float:
+    def output_voltage_set(self) -> Optional[float]:
         return self._output_voltage_set
 
     @property
-    def output_current_set(self) -> float:
+    def output_current_set(self) -> Optional[float]:
         return self._output_current_set
 
     @property
-    def ovp(self) -> float:
+    def ovp(self) -> Optional[float]:
         return self._ovp
 
     @property
-    def ocp(self) -> float:
+    def ocp(self) -> Optional[float]:
         return self._ocp
 
     @property
-    def output_enable(self) -> bool:
+    def output_enable(self) -> Optional[bool]:
         return self._output_enable
 
     @property
-    def output_toggle(self) -> bool:
+    def output_toggle(self) -> Optional[bool]:
         return self._output_toggle
 
 class RD60xx(AsyncModbusReverseTcpClient):
@@ -321,6 +322,11 @@ class RD60xx(AsyncModbusReverseTcpClient):
         # Init parent
         AsyncModbusReverseTcpClient.__init__(self, client_connected_cb, client_disconnected_cb, framer=FramerType.RTU, **kwargs)
 
+        # When pymodbus logs an error or critical it outputs the transmitted / received frame. When a PSU disconnects this makes the log
+        # too noisy, so we disable logging from within the library unless the log level is DEBUG
+        if logging.getLogger().level > logging.DEBUG:
+            Log.setLevel(logging.CRITICAL)
+
         # Reset presets
         self._presets = None
         self._presets_last_read = 0
@@ -344,100 +350,92 @@ class RD60xx(AsyncModbusReverseTcpClient):
     async def get_state(self) -> Optional[RD60xxStateGet]:
         """Read and return current PSU status summary"""
 
-        # Reset state
-        state = None
+        # Request reading block of registers from PSU (note this includes some unmapped registers)
+        read_count = self.RD60xxRegisters.BATT_WH_LO.value - self.RD60xxRegisters.MODEL.value + 1
+        response = await self.read_holding_registers(device_id=self.PSU_ADDR,
+                                                     address=self.RD60xxRegisters.MODEL.value,
+                                                     count=read_count)
+        regs_a = response.registers
+        if len(regs_a) != read_count:
+            raise Exception("Wrong number of registered returned")
 
-        try:
-            # Request reading block of registers from PSU (note this includes some unmapped registers)
-            read_count = self.RD60xxRegisters.BATT_WH_LO.value - self.RD60xxRegisters.MODEL.value + 1
-            response = await self.read_holding_registers(device_id=self.PSU_ADDR,
-                                                         address=self.RD60xxRegisters.MODEL.value,
-                                                         count=read_count)
-            regs_a = response.registers
-            if len(regs_a) != read_count:
-                raise Exception("Wrong number of registered returned")
+        # Get register value (offsetting to start of read)
+        geta = lambda x : regs_a[x.value - self.RD60xxRegisters.MODEL.value]
 
-            # Get register value (offsetting to start of read)
-            geta = lambda x : regs_a[x.value - self.RD60xxRegisters.MODEL.value]
+        # Get a 32-bit register
+        get32a = lambda hi, lo : (geta(hi) << 16) | geta(lo)
 
-            # Get a 32-bit register
-            get32a = lambda hi, lo : (geta(hi) << 16) | geta(lo)
+        # Helper to convert temperatures
+        temp = lambda sign, val : (-1 if geta(sign) == 1 else 1) * geta(val)
 
-            # Helper to convert temperatures
-            temp = lambda sign, val : (-1 if geta(sign) == 1 else 1) * geta(val)
+        # Lookup voltage and current scaling, with and without hardware revision
+        model_inc_hw_rev = geta(self.RD60xxRegisters.MODEL)
+        model_exc_hw_rev = model_inc_hw_rev // 10
+        if model_inc_hw_rev in self.MODEL_VOLTAGE_SCALINGS:
+            voltage_scale = self.MODEL_VOLTAGE_SCALINGS[model_inc_hw_rev]
+        else:
+            voltage_scale = self.MODEL_VOLTAGE_SCALINGS.get(model_exc_hw_rev, self.DEFAULT_VOLTAGE_SCALE)
+        if model_inc_hw_rev in self.MODEL_CURRENT_SCALINGS:
+            current_scale = self.MODEL_CURRENT_SCALINGS[model_inc_hw_rev]
+        else:
+            current_scale = self.MODEL_CURRENT_SCALINGS.get(model_exc_hw_rev, self.DEFAULT_CURRENT_SCALE)
+        if model_inc_hw_rev in self.MODEL_POWER_SCALINGS:
+            power_scale = self.MODEL_POWER_SCALINGS[model_inc_hw_rev]
+        else:
+            power_scale = self.MODEL_POWER_SCALINGS.get(model_exc_hw_rev, self.DEFAULT_POWER_SCALE)
 
-            # Lookup voltage and current scaling, with and without hardware revision
-            model_inc_hw_rev = geta(self.RD60xxRegisters.MODEL)
-            model_exc_hw_rev = model_inc_hw_rev // 10
-            if model_inc_hw_rev in self.MODEL_VOLTAGE_SCALINGS:
-                voltage_scale = self.MODEL_VOLTAGE_SCALINGS[model_inc_hw_rev]
-            else:
-                voltage_scale = self.MODEL_VOLTAGE_SCALINGS.get(model_exc_hw_rev, self.DEFAULT_VOLTAGE_SCALE)
-            if model_inc_hw_rev in self.MODEL_CURRENT_SCALINGS:
-                current_scale = self.MODEL_CURRENT_SCALINGS[model_inc_hw_rev]
-            else:
-                current_scale = self.MODEL_CURRENT_SCALINGS.get(model_exc_hw_rev, self.DEFAULT_CURRENT_SCALE)
-            if model_inc_hw_rev in self.MODEL_POWER_SCALINGS:
-                power_scale = self.MODEL_POWER_SCALINGS[model_inc_hw_rev]
-            else:
-                power_scale = self.MODEL_POWER_SCALINGS.get(model_exc_hw_rev, self.DEFAULT_POWER_SCALE)
+        # Split current scale
+        current_scale, use_current_range = current_scale
 
-            # Split current scale
-            current_scale, use_current_range = current_scale
+        # Snapshot current scale before applying range
+        current_scale_without_range = current_scale
 
-            # Snapshot current scale before applying range
-            current_scale_without_range = current_scale
+        # Retrieve current range
+        if use_current_range:
+            current_range = geta(self.RD60xxRegisters.CURRENT_RANGE)
+            if current_range == 0:
+                current_scale *= 10
 
-            # Retrieve current range
-            if use_current_range:
-                current_range = geta(self.RD60xxRegisters.CURRENT_RANGE)
-                if current_range == 0:
-                    current_scale *= 10
+        # Request reading block of registers from PSU (M0 for OVP and OCP)
+        response = await self.read_holding_registers(device_id=self.PSU_ADDR,
+                                                     address=self.RD60xxRegisters.M0_OVP.value,
+                                                     count=2)
+        regs_b = response.registers
+        if len(regs_b) != 2:
+            raise Exception("Wrong number of registered returned")
 
-            # Request reading block of registers from PSU (M0 for OVP and OCP)
-            response = await self.read_holding_registers(device_id=self.PSU_ADDR,
-                                                         address=self.RD60xxRegisters.M0_OVP.value,
-                                                         count=2)
-            regs_b = response.registers
-            if len(regs_b) != 2:
-                raise Exception("Wrong number of registered returned")
+        # Get register value (offsetting to start of read)
+        getb = lambda x : regs_b[x.value - self.RD60xxRegisters.M0_OVP.value]
 
-            # Get register value (offsetting to start of read)
-            getb = lambda x : regs_b[x.value - self.RD60xxRegisters.M0_OVP.value]
+        # Refresh presets periodically
+        await self._read_presets(voltage_scale, current_scale)
 
-            # Refresh presets periodically
-            await self._read_presets(voltage_scale, current_scale)
-
-            # Init state
-            state = RD60xxStateGet(geta(self.RD60xxRegisters.MODEL),
-                                   get32a(self.RD60xxRegisters.SERIAL_HI, self.RD60xxRegisters.SERIAL_LO),
-                                   str(geta(self.RD60xxRegisters.FIRMWARE) / self.FIRMWARE_SCALE),
-                                   temp(self.RD60xxRegisters.TEMP_DEG_C_SIGN, self.RD60xxRegisters.TEMP_DEG_C_VALUE),
-                                   temp(self.RD60xxRegisters.TEMP_DEG_F_SIGN, self.RD60xxRegisters.TEMP_DEG_F_VALUE),
-                                   geta(self.RD60xxRegisters.CURRENT_RANGE),
-                                   geta(self.RD60xxRegisters.OUTPUT_VOLTAGE_SET) / voltage_scale,
-                                   geta(self.RD60xxRegisters.OUTPUT_CURRENT_SET) / current_scale,
-                                   getb(self.RD60xxRegisters.M0_OVP) / voltage_scale,
-                                   getb(self.RD60xxRegisters.M0_OCP) / current_scale_without_range,
-                                   geta(self.RD60xxRegisters.OUTPUT_VOLTAGE_DISP) / voltage_scale,
-                                   geta(self.RD60xxRegisters.OUTPUT_CURRENT_DISP) / current_scale,
-                                   get32a(self.RD60xxRegisters.OUTPUT_POWER_DISP_HI, self.RD60xxRegisters.OUTPUT_POWER_DISP_LO) / power_scale,
-                                   geta(self.RD60xxRegisters.INPUT_VOLTAGE) / self.INPUT_VOLTAGE_SCALE,
-                                   geta(self.RD60xxRegisters.PROTECTION_STATUS),
-                                   geta(self.RD60xxRegisters.OUTPUT_MODE),
-                                   geta(self.RD60xxRegisters.OUTPUT_ENABLE) != 0,
-                                   geta(self.RD60xxRegisters.BATTERY_MODE) != 0,
-                                   geta(self.RD60xxRegisters.BATTERY_VOLTAGE) / voltage_scale,
-                                   temp(self.RD60xxRegisters.EXT_TEMP_DEG_C_SIGN, self.RD60xxRegisters.EXT_TEMP_DEG_C_VALUE),
-                                   temp(self.RD60xxRegisters.EXT_TEMP_DEG_F_SIGN, self.RD60xxRegisters.EXT_TEMP_DEG_F_VALUE),
-                                   get32a(self.RD60xxRegisters.BATT_AH_HI, self.RD60xxRegisters.BATT_AH_LO) / self.BATT_SCALE,
-                                   get32a(self.RD60xxRegisters.BATT_WH_HI, self.RD60xxRegisters.BATT_WH_LO) / self.BATT_SCALE,
-                                   self._presets
-                                  )
-
-        except (ModbusException, Exception):
-            # Expect to return empty state
-            pass
+        # Init state
+        state = RD60xxStateGet(geta(self.RD60xxRegisters.MODEL),
+                               get32a(self.RD60xxRegisters.SERIAL_HI, self.RD60xxRegisters.SERIAL_LO),
+                               str(geta(self.RD60xxRegisters.FIRMWARE) / self.FIRMWARE_SCALE),
+                               temp(self.RD60xxRegisters.TEMP_DEG_C_SIGN, self.RD60xxRegisters.TEMP_DEG_C_VALUE),
+                               temp(self.RD60xxRegisters.TEMP_DEG_F_SIGN, self.RD60xxRegisters.TEMP_DEG_F_VALUE),
+                               geta(self.RD60xxRegisters.CURRENT_RANGE),
+                               geta(self.RD60xxRegisters.OUTPUT_VOLTAGE_SET) / voltage_scale,
+                               geta(self.RD60xxRegisters.OUTPUT_CURRENT_SET) / current_scale,
+                               getb(self.RD60xxRegisters.M0_OVP) / voltage_scale,
+                               getb(self.RD60xxRegisters.M0_OCP) / current_scale_without_range,
+                               geta(self.RD60xxRegisters.OUTPUT_VOLTAGE_DISP) / voltage_scale,
+                               geta(self.RD60xxRegisters.OUTPUT_CURRENT_DISP) / current_scale,
+                               get32a(self.RD60xxRegisters.OUTPUT_POWER_DISP_HI, self.RD60xxRegisters.OUTPUT_POWER_DISP_LO) / power_scale,
+                               geta(self.RD60xxRegisters.INPUT_VOLTAGE) / self.INPUT_VOLTAGE_SCALE,
+                               geta(self.RD60xxRegisters.PROTECTION_STATUS),
+                               geta(self.RD60xxRegisters.OUTPUT_MODE),
+                               geta(self.RD60xxRegisters.OUTPUT_ENABLE) != 0,
+                               geta(self.RD60xxRegisters.BATTERY_MODE) != 0,
+                               geta(self.RD60xxRegisters.BATTERY_VOLTAGE) / voltage_scale,
+                               temp(self.RD60xxRegisters.EXT_TEMP_DEG_C_SIGN, self.RD60xxRegisters.EXT_TEMP_DEG_C_VALUE),
+                               temp(self.RD60xxRegisters.EXT_TEMP_DEG_F_SIGN, self.RD60xxRegisters.EXT_TEMP_DEG_F_VALUE),
+                               get32a(self.RD60xxRegisters.BATT_AH_HI, self.RD60xxRegisters.BATT_AH_LO) / self.BATT_SCALE,
+                               get32a(self.RD60xxRegisters.BATT_WH_HI, self.RD60xxRegisters.BATT_WH_LO) / self.BATT_SCALE,
+                               self._presets
+                              )
 
         return state
 

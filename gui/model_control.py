@@ -240,6 +240,7 @@ class RidenPSUModelControl:
             except asyncio.CancelledError:
                 # Task cancelled, reset client
                 self._mqtt_client = None
+                self._logger.info("MQTT inbound task cancelled")
                 break
 
     async def _mqtt_outbound(self):
@@ -278,7 +279,7 @@ class RidenPSUModelControl:
 
         except asyncio.CancelledError:
             # Task cancelled
-            pass
+            self._logger.info("MQTT outbound task cancelled")
 
     def set_psu(self, identity:str) -> None:
         """Set PSU to monitor / control"""

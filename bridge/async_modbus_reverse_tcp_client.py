@@ -1,5 +1,4 @@
 from collections.abc import Callable
-from typing import Any
 import asyncio
 import platform
 import socket
@@ -96,6 +95,11 @@ class AsyncModbusReverseTcpClient(ModbusBaseClient, asyncio.Protocol):
     def connection_made(self, transport):
         """Handle new connection"""
 
+        # Update our conn_name and transaction manager with peer info
+        host, port = transport.get_extra_info('peername')
+        self.comm_params.comm_name = f"{host}:{port}"
+        self.ctx.comm_params.comm_name = self.comm_params.comm_name
+
         # Provide transport to transaction manager
         self.ctx.transport = transport
 
@@ -138,8 +142,8 @@ class AsyncModbusReverseTcpClient(ModbusBaseClient, asyncio.Protocol):
     def connection_lost(self, exc):
         """Handle closed connection"""
 
-        # Notify via callback
-        self._client_disconnected_cb(self)
-
         # Pass to transaction manager
         self.ctx.connection_lost(exc)
+
+        # Notify via callback
+        self._client_disconnected_cb(self)

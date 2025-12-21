@@ -32,8 +32,7 @@ async def publish_discovery_config(
     if not mqtt_client:
         return
 
-    if logger:
-        logger.info("Publishing MQTT Discovery config for %s", identity)
+    logger.info("Publishing MQTT Discovery config for %s", identity)
 
     # Extract current rating from model number
     # Model format: VVCCR where VV=voltage, CC=current, R=revision
@@ -242,8 +241,6 @@ async def publish_discovery_config(
     try:
         for topic, config in configs:
             await mqtt_client.publish(topic, payload=json.dumps(config), retain=True)
-        if logger:
-            logger.info("Published %d MQTT Discovery configs for %s", len(configs), identity)
+        logger.info("Published %d MQTT Discovery configs for %s", len(configs), identity)
     except aiomqtt.MqttError as e:
-        if logger:
-            logger.error("Failed to publish MQTT Discovery configs: %s", e)
+        logger.error("Failed to publish MQTT Discovery configs: %s", e)

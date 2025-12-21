@@ -52,8 +52,8 @@ def main():
     mqtt_discovery_enabled = config.getboolean(section="GENERAL", option="mqtt_discovery_enabled", fallback=False)
     mqtt_discovery_prefix = config.get(section="GENERAL", option="mqtt_discovery_prefix", fallback="homeassistant")
 
-    log_level_attr = getattr(logging, log_level.upper())
     # Init logging
+    log_level_attr = getattr(logging, log_level.upper())
     log_format = '[%(asctime)s] [%(name)s] [%(levelname)s] %(message)s'
     if log_file:
         logging.basicConfig(filename=log_file, level=log_level_attr, format=log_format)

@@ -61,13 +61,13 @@ class RD60xxToMQTT:
         self._shutdown_event = asyncio.Event()
 
         # Newly connected PSUs
-        self._new_psu_queue = asyncio.Queue(maxsize=16)
+        self._new_psu_queue: asyncio.Queue[Tuple[RD60xx, str, int]] = asyncio.Queue(maxsize=16)
 
         # Persistent state (data associated with PSU that's persisted across unit connections)
         self._psu_states = PSUStates()
 
         # Map of connected PSUs (serial no -> rd60xxmqtt instances)
-        self._psus = {}
+        self._psus : Dict[str, Bridge] = {}
 
         # Reset MQTT client
         self._mqtt_client = None
@@ -152,7 +152,7 @@ class RD60xxToMQTT:
                 found_identity = identity
 
                 # Cancel PSU background task
-                self._psus[identity].cancel()
+                psu.cancel()
 
                 # Remove from dictionary
                 del self._psus[identity]
@@ -224,7 +224,7 @@ class RD60xxToMQTT:
                             identity = topic.split("/")[1]
 
                             # Lookup PSU
-                            psu:Bridge = self._psus.get(identity)
+                            psu = self._psus.get(identity)
 
                             # Log msg
                             self._logger.debug("Msg arrived on topic: '%s', for identity: '%s' with payload: '%s'", topic, identity, repr(payload))
@@ -289,30 +289,33 @@ class RD60xxToMQTT:
                         except:
                             pass
 
-            except aiomqtt.MqttError as error:
-                # MQTT connection failed
+            except aiomqtt.MqttError as e:
+                # MQTT connection failed, reset client
                 self._mqtt_client = None
-                self._logger.warning("MQTT error %s, reconnecting in %d seconds.", error, self._mqtt_reconnect_delay_secs)
+                self._logger.warning("MQTT error %s, reconnecting in %d seconds.", e, self._mqtt_reconnect_delay_secs)
                 await asyncio.sleep(self._mqtt_reconnect_delay_secs)
 
             except asyncio.CancelledError:
-                # Task cancelled
-                self._logger.info("MQTT task stopped")
-
-                # Reset client
+                # Task cancelled, reset client
+                self._logger.info("MQTT inbound task cancelled")
                 self._mqtt_client = None
                 break
 
-            except:
-                # Catchall
+            except Exception:
+                # Something unexpected happened, reset client
                 self._mqtt_client = None
                 self._logger.exception("General error, reconnecting in %d seconds.", self._mqtt_reconnect_delay_secs)
                 await asyncio.sleep(self._mqtt_reconnect_delay_secs)
 
-    async def _delayed_state_query(self, identity:str, psu, delay:float):
+    async def _delayed_state_query(self, identity:str, psu:Bridge, delay:float):
         """Queue a state query after a delay, allowing PSU to apply changes"""
+
+        # Wait requested delay
         await asyncio.sleep(delay)
+
+        # Queue state get
         psu.queue_state_get()
+
         # Clear pending flag so future commands can schedule new queries
         self._pending_state_queries.discard(identity)
 
@@ -382,9 +385,9 @@ class RD60xxToMQTT:
 
                 if identity is None:
                     # Query PSU to retrieve model and serial number (forming identity)
-                    query_result = await psu.get_state()
-
-                    if query_result is None:
+                    try:
+                        query_result = await psu.get_state()
+                    except Exception:
                         # Query failed, close connection
                         psu.close()
                         continue
@@ -444,7 +447,7 @@ class RD60xxToMQTT:
 
         except asyncio.CancelledError:
             # Task cancelled
-            self._logger.info("PSU task stopped")
+            self._logger.info("PSU task cancelled")
 
     async def _send_psu_list(self) -> None:
         """Transmit PSU list over MQTT"""

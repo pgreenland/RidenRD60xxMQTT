@@ -3,7 +3,7 @@ import asyncio
 import logging
 import time
 
-import pymodbus
+from pymodbus.exceptions import ModbusException
 
 from rd60xx import RD60xx, RD60xxStateSet
 from psu_state import PSUState
@@ -88,75 +88,100 @@ class Bridge:
     def cancel(self):
         """Cancel worker task for PSU"""
 
+        self._logger.debug("Cancelling PSU task for %s", self._identity)
         self._psu_task.cancel()
 
     async def _psu_task_func(self):
         """PSU worker task, periodically queries unit (if enabled, publishing state, while updating unit with received state"""
 
-        try:
-            if self._set_clock_on_connection:
-                # Set PSU clock before entering main loop
-                self._logger.debug("Set clock for %s", self._identity)
-                await self._set_clock()
+        # Track if clock has been set
+        clock_set = False
 
-            # Main loop
-            while True:
-                # Process any requests in queue
-                while not self._inbound_queue.empty():
-                    # Dequeue item
-                    entry = self._inbound_queue.get_nowait()
+        # Main loop
+        while True:
+            try:
+                # Set PSU clock if required
+                if not clock_set and self._set_clock_on_connection:
+                    self._logger.debug("Set clock for %s", self._identity)
+                    await self._set_clock()
+                    clock_set = True
 
-                    # Process message
-                    await self._process_queue_entry(entry)
+                # Execute single loop iteration
+                await self._psu_task_loop_step()
 
-                # Block on queue until next query time reached
+            except ModbusException as e:
+                # Check for cancellation within pymodbus
+                if isinstance(e.__cause__, asyncio.CancelledError):
+                    # Task cancelled within pymodbus
+                    self._logger.debug("PSU task for %s cancelled within pymodbus", self._identity)
+
+                    # Break from loop
+                    break
+                else:
+                    # Log modbus exception
+                    self._logger.warning("Modbus exception in psu_task for %s : %s", self._identity, str(e))
+
+            except asyncio.CancelledError:
+                # Task cancelled
+                self._logger.debug("PSU task for %s cancelled", self._identity)
+
+                # Break from loop
+                break
+
+            except Exception:
+                # General exception
+                self._logger.exception("Exception in psu_task for %s", self._identity)
+
+                # Close connection
                 try:
-                    # Calculate timeout, assume none (blocking read), or >= 0 if querying enabled
-                    timeout = None
-                    if self._persistent_state.update_period > 0:
-                        # Calculate timeout before next query, limiting to zero if already late
-                        timeout = max(self._persistent_state.update_period - (time.monotonic() - self._last_query_time), 0)
-
-                    # Dequeue item, waiting between some and infinite time
-                    entry = await asyncio.wait_for(self._inbound_queue.get(), timeout=timeout)
-
-                    # Process message
-                    await self._process_queue_entry(entry)
-
-                except asyncio.TimeoutError:
-                    # No message retrieved within timeout
+                    self.close()
+                except:
                     pass
 
-                # Check for periodic query
-                if self._persistent_state.update_period > 0:
-                    # Sample current time
-                    curr_time = time.monotonic()
+                # Break from loop
+                break
 
-                    # Calculate elapsed time since last query
-                    elapsed_time = curr_time - self._last_query_time
+    async def _psu_task_loop_step(self):
+        """Execute PSU task loop iteration"""
 
-                    # Has query period been reached
-                    if elapsed_time > self._persistent_state.update_period:
-                        # Query psu
-                        await self._get_state()
+        # Process any requests in queue
+        while not self._inbound_queue.empty():
+            # Dequeue item
+            entry = self._inbound_queue.get_nowait()
 
-        except pymodbus.ModbusException:
-            # Modbus connection gone boom, close connection
-            self._logger.exception("Modbus exception in psu_task")
+            # Process message
+            await self._process_queue_entry(entry)
 
-            # Close connection
-            try:
-                self.close()
-            except:
-                pass
+        # Block on queue until next query time reached
+        try:
+            # Calculate timeout, assume none (blocking read), or >= 0 if querying enabled
+            timeout = None
+            if self._persistent_state.update_period > 0:
+                # Calculate timeout before next query, limiting to zero if already late
+                timeout = max(self._persistent_state.update_period - (time.monotonic() - self._last_query_time), 0)
 
-        except asyncio.CancelledError:
-            # Task cancelled
+            # Dequeue item, waiting between some and infinite time
+            entry = await asyncio.wait_for(self._inbound_queue.get(), timeout=timeout)
+
+            # Process message
+            await self._process_queue_entry(entry)
+
+        except asyncio.TimeoutError:
+            # No message retrieved within timeout
             pass
 
-        except:
-            # General exception
-            self._logger.exception("Exception in psu_task")
+        # Check for periodic query
+        if self._persistent_state.update_period > 0:
+            # Sample current time
+            curr_time = time.monotonic()
+
+            # Calculate elapsed time since last query
+            elapsed_time = curr_time - self._last_query_time
+
+            # Has query period been reached
+            if elapsed_time > self._persistent_state.update_period:
+                # Query psu
+                await self._get_state()
 
     async def _process_queue_entry(self, entry:Tuple[bool, dict]):
         """Handle single entry from queue"""
@@ -189,110 +214,84 @@ class Bridge:
 
         # Extract fields
         try:
-            preset_index = msg.get("preset_index")
-            if preset_index is not None:
-                preset_index = int(preset_index)
-            output_voltage_set = msg.get("output_voltage_set")
-            if output_voltage_set is not None:
-                output_voltage_set = float(output_voltage_set)
-            output_current_set = msg.get("output_current_set")
-            if output_current_set is not None:
-                output_current_set = float(output_current_set)
-            ovp = msg.get("ovp")
-            if ovp is not None:
-                ovp = float(ovp)
-            ocp = msg.get("ocp")
-            if ocp is not None:
-                ocp = float(ocp)
-            output_enable = msg.get("output_enable")
-            if output_enable is not None:
-                output_enable = bool(output_enable)
-            output_toggle = msg.get("output_toggle")
-            if output_toggle is not None:
-                output_toggle = bool(output_toggle)
-        except:
+            # Construct state
+            state = RD60xxStateSet(
+                msg.get("preset_index"),
+                msg.get("output_voltage_set"),
+                msg.get("output_current_set"),
+                msg.get("ovp"),
+                msg.get("ocp"),
+                msg.get("output_enable"),
+                msg.get("output_toggle")
+            )
+        except ValueError:
             # Ignore any decode failures and bail
             self._logger.warning("Bad set data for identity %s", self._identity)
             return
-
-        # Construct state
-        state = RD60xxStateSet(
-            preset_index,
-            output_voltage_set,
-            output_current_set,
-            ovp,
-            ocp,
-            output_enable,
-            output_toggle
-        )
 
         # Write state
         await self._psu.set_state(state)
 
     async def _get_state(self):
-        """Query unit and pubish current data via MQTT"""
+        """Query unit and publish current data via MQTT"""
 
         # Query unit
         state = await self._psu.get_state()
 
-        # Was unit was queried successfully?
-        if state is not None:
-            # Yes, prepare message
-            msg = {}
+        # Prepare message
+        msg = {}
+        msg["connected"] = True
+        msg["period"] = self._persistent_state.update_period
+        msg["model"] = state.model
+        msg["serial_no"] = state.serial_no
+        msg["firmware_version"] = state.firmware_version
+        msg["temp_c"] = state.temp_c
+        msg["temp_f"] = state.temp_f
+        msg["current_range"] = state.current_range
+        msg["output_voltage_set"] = state.output_voltage_set
+        msg["output_current_set"] = state.output_current_set
+        msg["ovp"] = state.ovp
+        msg["ocp"] = state.ocp
+        msg["output_voltage_disp"] = state.output_voltage_disp
+        msg["output_current_disp"] = state.output_current_disp
+        msg["output_power_disp"] = state.output_power_disp
+        msg["input_voltage"] = state.input_voltage
+        protection_status = state.protection_status
+        if protection_status == 0:
+            protection_status = "normal"
+        elif protection_status == 1:
+            protection_status = "ovp"
+        elif protection_status == 2:
+            protection_status = "ocp"
+        else:
+            protection_status = "unknown"
+        msg["protection_status"] = protection_status
+        output_mode = state.output_mode
+        if output_mode == 0:
+            output_mode = "cv"
+        elif output_mode == 1:
+            output_mode = "cc"
+        else:
+            output_mode = "unknown"
+        msg["output_mode"] = output_mode
+        msg["output_enable"] = state.output_enable
+        msg["battery_mode"] = state.battery_mode
+        msg["battery_voltage"] = state.battery_voltage
+        msg["ext_temp_c"] = state.ext_temp_c
+        msg["ext_temp_f"] = state.ext_temp_f
+        msg["batt_ah"] = state.batt_ah
+        msg["batt_wh"] = state.batt_wh
+        presets = []
+        for x in state.presets:
+            # Split up preset
+            volt, curr, ovp, ocp = x
 
-            # Add fields
-            msg["connected"] = True
-            msg["period"] = self._persistent_state.update_period
-            msg["model"] = state.model
-            msg["serial_no"] = state.serial_no
-            msg["firmware_version"] = state.firmware_version
-            msg["temp_c"] = state.temp_c
-            msg["temp_f"] = state.temp_f
-            msg["current_range"] = state.current_range
-            msg["output_voltage_set"] = state.output_voltage_set
-            msg["output_current_set"] = state.output_current_set
-            msg["ovp"] = state.ovp
-            msg["ocp"] = state.ocp
-            msg["output_voltage_disp"] = state.output_voltage_disp
-            msg["output_current_disp"] = state.output_current_disp
-            msg["output_power_disp"] = state.output_power_disp
-            msg["input_voltage"] = state.input_voltage
-            protection_status = state.protection_status
-            if protection_status == 0:
-                protection_status = "normal"
-            elif protection_status == 1:
-                protection_status = "ovp"
-            elif protection_status == 2:
-                protection_status = "ocp"
-            else:
-                protection_status = "unknown"
-            msg["protection_status"] = protection_status
-            output_mode = state.output_mode
-            if output_mode == 0:
-                 output_mode = "cv"
-            elif output_mode == 1:
-                 output_mode = "cc"
-            else:
-                 output_mode = "unknown"
-            msg["output_mode"] = output_mode
-            msg["output_enable"] = state.output_enable
-            msg["battery_mode"] = state.battery_mode
-            msg["battery_voltage"] = state.battery_voltage
-            msg["ext_temp_c"] = state.ext_temp_c
-            msg["ext_temp_f"] = state.ext_temp_f
-            msg["batt_ah"] = state.batt_ah
-            msg["batt_wh"] = state.batt_wh
-            presets = []
-            for x in state.presets:
-                 # Split up preset
-                 volt, curr, ovp, ocp = x
+            # Add dict
+            presets.append({"v":volt, "c":curr, "ovp":ovp, "ocp":ocp})
+        msg["presets"] = presets
 
-                # Add dict
-                 presets.append({"v":volt, "c":curr, "ovp":ovp, "ocp":ocp})
-            msg["presets"] = presets
+        # Publish state message
+        await self._publish_callback(self.identity, msg)
 
-            # Publish state message
-            await self._publish_callback(self.identity, msg)
-
-            # Update last query time
-            self._last_query_time = time.monotonic()
+        # Update last query time
+        self._last_query_time = time.monotonic()
