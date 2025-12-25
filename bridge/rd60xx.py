@@ -310,7 +310,6 @@ class RD60xx(AsyncModbusReverseTcpClient):
     MODEL_POWER_SCALINGS = {
         60125 : 1000.0,
     }
-
     BATT_SCALE = 1000.0
 
     # To save querying PSU too much, only refresh presets periodically
@@ -387,9 +386,6 @@ class RD60xx(AsyncModbusReverseTcpClient):
         # Split current scale
         current_scale, use_current_range = current_scale
 
-        # Snapshot current scale before applying range
-        current_scale_without_range = current_scale
-
         # Retrieve current range
         if use_current_range:
             current_range = geta(self.RD60xxRegisters.CURRENT_RANGE)
@@ -420,7 +416,7 @@ class RD60xx(AsyncModbusReverseTcpClient):
                                geta(self.RD60xxRegisters.OUTPUT_VOLTAGE_SET) / voltage_scale,
                                geta(self.RD60xxRegisters.OUTPUT_CURRENT_SET) / current_scale,
                                getb(self.RD60xxRegisters.M0_OVP) / voltage_scale,
-                               getb(self.RD60xxRegisters.M0_OCP) / current_scale_without_range,
+                               getb(self.RD60xxRegisters.M0_OCP) / current_scale,
                                geta(self.RD60xxRegisters.OUTPUT_VOLTAGE_DISP) / voltage_scale,
                                geta(self.RD60xxRegisters.OUTPUT_CURRENT_DISP) / current_scale,
                                get32a(self.RD60xxRegisters.OUTPUT_POWER_DISP_HI, self.RD60xxRegisters.OUTPUT_POWER_DISP_LO) / power_scale,
